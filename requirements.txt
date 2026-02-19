@@ -7,3 +7,5 @@ stripe
 python-multipart
 openpyxl
 xlsxwriter
+supabase
+python-dotenv
