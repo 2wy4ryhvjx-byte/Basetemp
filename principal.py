@@ -16,7 +16,7 @@ supabase_key = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # Seu e-mail pessoal para o sistema te reconhecer como dono
-EMAIL_ADMIN = "SEU_EMAIL_AQUI@EXEMPLO.COM" 
+EMAIL_ADMIN = "abielgm@icloud.com" 
 
 @app.get("/", response_class=HTMLResponse)
 async def interface():
