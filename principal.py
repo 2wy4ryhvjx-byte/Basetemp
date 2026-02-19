@@ -1,237 +1,299 @@
 import os
 import stripe
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import HTMLResponse
 import pandas as pd
 from io import BytesIO
+import json
 from motor import executar_calculo_tb, rename_columns
 
 app = FastAPI()
 
-# Configuração Stripe
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 EMAIL_ADMIN = "abielgm@icloud.com"
 
 @app.get("/", response_class=HTMLResponse)
 async def interface():
-    # Buscamos as chaves das Variáveis de Ambiente do Render
-    # Com o Fallback (reserva) caso o Render demore a propagar
     s_url = os.getenv("SUPABASE_URL", "https://iuhtopexunirguxmjiey.supabase.co")
-    s_key = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1aHRvcGV4dW5pcmd1eG1qaWV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MjIzNTcsImV4cCI6MjA4NzA5ODM1N30.EjDui9gQ5AlRaNpoVQisGUoXmK3j74gwzq9QSguxq78")
+    s_key = os.getenv("SUPABASE_KEY", "")
 
     return f"""
     <!DOCTYPE html>
     <html lang="pt-br">
     <head>
-        <meta charset="UTF-8">
-        <title>EstimaTB Pro</title>
+        <meta charset="UTF-8"><title>EstimaTB Pro - Workstation</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-        <style> .animate-in {{ animation: fadeIn 0.5s ease-out; }} @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }} </style>
+        <style>
+            .tab-active {{ border-bottom: 4px solid #16a34a; color: #16a34a; }}
+            input[type=number]::-webkit-inner-spin-button {{ opacity: 1; }}
+        </style>
     </head>
-    <body class="bg-gray-100 font-sans min-h-screen flex items-center justify-center p-4">
-        <div class="max-w-md w-full animate-in">
+    <body class="bg-[#f8fafc] font-sans min-h-screen">
+        
+        <div class="max-w-6xl mx-auto p-4 md:p-8">
             
             <!-- SEÇÃO DE LOGIN -->
-            <div id="login-section" class="bg-white p-8 rounded-[2rem] shadow-2xl border border-gray-100">
-                <div class="text-center mb-8">
-                    <h1 class="text-4xl font-black text-green-700 italic underline decoration-yellow-400">EstimaTB🌿</h1>
-                    <p class="text-gray-400 text-[10px] font-bold uppercase mt-2 tracking-widest">Análise de Temperatura Basal</p>
-                </div>
-
-                <div class="space-y-4">
-                    <input type="email" id="email" placeholder="E-mail Acadêmico" class="w-full bg-gray-50 border-2 border-gray-100 p-4 rounded-2xl focus:border-green-500 outline-none transition-all">
-                    
-                    <div class="relative">
-                        <input type="password" id="password" placeholder="Senha" class="w-full bg-gray-50 border-2 border-gray-100 p-4 rounded-2xl focus:border-green-500 outline-none transition-all">
-                        <button onclick="togglePassword('password')" class="absolute right-4 top-5 text-gray-300 hover:text-green-500">
-                            <i class="fas fa-eye" id="eye-icon"></i>
-                        </button>
-                    </div>
-
-                    <div id="confirm-box" class="hidden transition-all">
-                        <input type="password" id="confirmPassword" placeholder="Confirme a Senha" class="w-full bg-gray-50 border-2 border-gray-100 p-4 rounded-2xl focus:border-green-500 outline-none transition-all">
-                    </div>
-
-                    <button id="btnAuth" onclick="handleAuth()" class="w-full bg-green-600 text-white py-4 rounded-2xl font-black text-lg shadow-lg hover:bg-green-700 active:scale-95 transition-all uppercase">Entrar</button>
-                    
-                    <button onclick="toggleMode()" id="btnSwitch" class="w-full text-green-700 font-bold text-xs uppercase tracking-tighter">Criar Nova Conta Acadêmica</button>
-                </div>
+            <div id="login-section" class="max-w-md mx-auto bg-white p-10 rounded-[2.5rem] shadow-2xl mt-20 border border-slate-100 text-center">
+                <h1 class="text-4xl font-black text-green-700 italic mb-8 italic">EstimaTB🌿</h1>
+                <input type="email" id="email" placeholder="E-mail" class="w-full border-2 p-4 rounded-2xl mb-4 focus:border-green-600 outline-none">
+                <input type="password" id="password" placeholder="Senha" class="w-full border-2 p-4 rounded-2xl mb-6 focus:border-green-600 outline-none">
+                <button onclick="auth('login')" class="w-full bg-green-600 text-white py-4 rounded-2xl font-black text-lg shadow-lg hover:bg-green-700">ENTRAR</button>
+                <button onclick="auth('signup')" class="mt-4 text-green-600 text-xs font-bold uppercase tracking-widest">Novo Cadastro</button>
             </div>
 
-            <!-- DASHBOARD DO PESQUISADOR -->
-            <div id="main-section" class="hidden animate-in">
-                <div class="bg-white p-8 rounded-[2rem] shadow-2xl border-b-[12px] border-green-600 mb-6">
-                    <div class="flex justify-between items-center mb-6 border-b pb-4">
-                        <div class="flex flex-col text-left">
-                            <span class="text-[9px] font-black text-gray-300 uppercase tracking-widest">Autenticado</span>
-                            <span id="user-display" class="font-bold text-gray-700 text-sm">--</span>
-                        </div>
-                        <button onclick="logout()" class="text-red-500 font-black text-[10px] border-2 border-red-500 px-3 py-1 rounded-full hover:bg-red-500 hover:text-white transition-all uppercase">Sair</button>
+            <!-- ÁREA PRINCIPAL -->
+            <div id="main-section" class="hidden animate-fade-in">
+                <!-- Header Status -->
+                <div class="bg-white p-6 rounded-[2rem] shadow-sm mb-6 flex justify-between items-center border border-slate-100">
+                    <div>
+                        <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Ambiente de Pesquisa</span>
+                        <span id="user-display" class="font-bold text-slate-700"></span>
                     </div>
-
-                    <label class="block text-center text-xs font-black text-gray-400 uppercase mb-4 tracking-tighter italic">Importar Dados (CSV/XLSX)</label>
-                    <input type="file" id="arquivo" class="block w-full text-sm mb-8 bg-gray-50 p-4 border-2 border-dashed border-gray-100 rounded-3xl cursor-pointer">
-                    
-                    <button id="btnCalc" onclick="calcular()" class="w-full bg-green-600 text-white py-5 rounded-[1.5rem] font-black text-xl shadow-xl hover:scale-105 transition-all uppercase">Analisar Campo</button>
+                    <div id="admin-badge" class="hidden px-4 py-1 bg-green-50 text-green-700 rounded-full font-black text-[10px] border border-green-200 uppercase">Administrador Master</div>
+                    <button onclick="logout()" class="text-slate-400 hover:text-red-500 font-bold text-xs uppercase">Sair</button>
                 </div>
 
-                <!-- ÁREA DE RESULTADOS -->
-                <div id="resultado" class="hidden bg-white p-8 rounded-[2rem] shadow-2xl border-t-[10px] border-blue-600 transition-all scale-100">
-                    <h3 class="font-black text-center text-xl mb-6 text-gray-800 tracking-tighter italic border-b pb-4">RESULTADOS DA MODELAGEM</h3>
-                    <div class="grid grid-cols-2 gap-4 mb-8">
-                        <div class="bg-green-50 p-6 rounded-[1.5rem] text-center shadow-inner border border-green-100">
-                            <p class="text-[9px] font-black text-green-800 uppercase block mb-1">Temperatura Basal (Tb)</p>
-                            <p id="res_tb" class="text-3xl font-black text-green-700 tracking-tighter">--</p>
-                        </div>
-                        <div class="bg-blue-50 p-6 rounded-[1.5rem] text-center shadow-inner border border-blue-100">
-                            <p class="text-[9px] font-black text-blue-800 uppercase block mb-1">Precisão do Modelo (R²)</p>
-                            <p id="res_r2" class="text-3xl font-black text-blue-700 tracking-tighter">--</p>
-                        </div>
-                    </div>
+                <!-- Painel de Trabalho -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
                     
-                    <div id="paywall" class="p-6 bg-yellow-50 rounded-2xl text-center border-2 border-yellow-100 shadow-md">
-                        <p class="text-xs text-yellow-800 font-black mb-4 uppercase italic">Liberar download dos arquivos de saída (.xlsx)?</p>
-                        <button onclick="pagar()" class="bg-yellow-600 text-white px-8 py-3 rounded-full font-black text-md shadow-lg hover:bg-yellow-700 transform hover:scale-105 transition-all uppercase">Comprar Licença de Relatório</button>
+                    <div class="lg:col-span-4 space-y-6">
+                        <!-- Nome da Análise e Inputs -->
+                        <div class="bg-white p-6 rounded-[2rem] shadow-xl border border-slate-100">
+                            <h3 class="font-black text-slate-800 text-xs uppercase mb-4 flex items-center"><i class="fas fa-microscope mr-2 text-green-600"></i>Configurar Análise</h3>
+                            
+                            <input type="text" id="analise_nome" placeholder="Nome da Análise (ex: Soja Época 1)" class="w-full border-2 p-3 rounded-xl mb-4 text-sm outline-none focus:border-green-600">
+                            
+                            <!-- Tabs de Entrada -->
+                            <div class="flex border-b mb-4">
+                                <button id="tabFile" onclick="switchTab('file')" class="flex-1 py-2 text-xs font-bold tab-active">Upload Arquivo</button>
+                                <button id="tabManual" onclick="switchTab('manual')" class="flex-1 py-2 text-xs font-bold text-slate-400">Entrada Manual</button>
+                            </div>
+
+                            <div id="input_file_container">
+                                <input type="file" id="arquivo" class="block w-full text-[10px] border-2 border-dashed p-4 rounded-xl cursor-pointer bg-slate-50 mb-4">
+                            </div>
+
+                            <div id="input_manual_container" class="hidden">
+                                <p class="text-[10px] text-slate-500 mb-2 italic">Preencha no padrão: Data, Tmin, Tmax, NF</p>
+                                <textarea id="manual_data" placeholder="2023-10-01, 15.5, 28.4, 2" class="w-full border-2 p-3 rounded-xl h-32 text-xs font-mono outline-none" rows="5"></textarea>
+                            </div>
+
+                            <!-- Configurações Avançadas -->
+                            <details class="mb-6 group">
+                                <summary class="list-none cursor-pointer flex justify-between items-center text-[10px] font-black text-slate-500 hover:text-green-600 uppercase tracking-widest bg-slate-50 p-2 rounded-lg">
+                                    <span>Configurações Avançadas</span>
+                                    <i class="fas fa-chevron-down transition group-open:rotate-180"></i>
+                                </summary>
+                                <div class="p-4 bg-slate-50 rounded-b-lg border-t space-y-3">
+                                    <div class="flex justify-between items-center">
+                                        <label class="text-[10px] font-bold">Tb Mínima:</label>
+                                        <input type="number" id="tb_min" value="0.0" step="0.5" class="w-20 border rounded p-1 text-center font-bold">
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <label class="text-[10px] font-bold">Tb Máxima:</label>
+                                        <input type="number" id="tb_max" value="20.0" step="0.5" class="w-20 border rounded p-1 text-center font-bold">
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <label class="text-[10px] font-bold">Passo (0.1 a 0.9):</label>
+                                        <input type="number" id="passo" value="0.5" min="0.1" max="0.9" step="0.1" class="w-20 border rounded p-1 text-center font-bold">
+                                    </div>
+                                </div>
+                            </details>
+
+                            <button id="btnCalc" onclick="calcular()" class="w-full bg-green-600 text-white py-5 rounded-[1.5rem] font-black text-xl shadow-lg hover:bg-green-700 transition-all uppercase tracking-tighter">
+                                Analisar Dados
+                            </button>
+                        </div>
                     </div>
+
+                    <div id="results_area" class="lg:col-span-8 space-y-6 hidden">
+                        <!-- Nome e Métricas -->
+                        <div class="bg-white p-6 rounded-[2rem] shadow-xl">
+                             <h2 class="text-xl font-black text-slate-800 mb-6 italic underline decoration-green-500" id="display_nome_analise"></h2>
+                             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div class="bg-slate-50 p-6 rounded-3xl border-b-4 border-green-600 text-center">
+                                    <span class="text-[9px] font-black text-slate-400 uppercase italic">Temp. Basal (Tb)</span>
+                                    <p id="res_tb" class="text-3xl font-black text-green-700 mt-2">--</p>
+                                </div>
+                                <div class="bg-slate-50 p-6 rounded-3xl border-b-4 border-blue-600 text-center">
+                                    <span class="text-[9px] font-black text-slate-400 uppercase italic">Ajuste (R²)</span>
+                                    <p id="res_r2" class="text-3xl font-black text-blue-700 mt-2">--</p>
+                                </div>
+                                <div class="bg-slate-50 p-6 rounded-3xl border-b-4 border-slate-600 text-center">
+                                    <span class="text-[9px] font-black text-slate-400 uppercase italic">Erro (QME)</span>
+                                    <p id="res_qme" class="text-lg font-black text-slate-600 mt-3 tracking-tighter">--</p>
+                                </div>
+                             </div>
+                        </div>
+
+                        <!-- Gráficos e Tabela -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="bg-white p-4 rounded-3xl shadow-lg border border-slate-100" id="graph-qme"></div>
+                            <div class="bg-white p-4 rounded-3xl shadow-lg border border-slate-100" id="graph-reg"></div>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-3xl shadow-lg border border-slate-100">
+                             <h3 class="text-xs font-black uppercase mb-4 text-slate-500 italic">Pré-visualização da Base</h3>
+                             <div id="table_preview" class="overflow-auto max-h-48 text-[10px] font-mono"></div>
+                        </div>
+                    </div>
+
                 </div>
             </div>
-
         </div>
 
         <script>
-            // CONFIGURAÇÃO SUPABASE
-            const sUrl = "{s_url}";
-            const sKey = "{s_key}";
-            const _supabase = supabase.createClient(sUrl, sKey);
+            const _supabase = supabase.createClient("{s_url}", "{s_key}");
             const ADMIN_EMAIL = "{EMAIL_ADMIN}".toLowerCase();
-            let mode = 'login';
+            let currentTab = 'file';
 
-            function togglePassword(id) {{
-                const input = document.getElementById(id);
-                const eye = document.getElementById('eye-icon');
-                if (input.type === "password") {{
-                    input.type = "text";
-                    eye.classList.replace('fa-eye', 'fa-eye-slash');
-                }} else {{
-                    input.type = "password";
-                    eye.classList.replace('fa-eye-slash', 'fa-eye');
-                }}
+            function switchTab(t) {{
+                currentTab = t;
+                document.getElementById('tabFile').classList.toggle('tab-active', t==='file');
+                document.getElementById('tabManual').classList.toggle('tab-active', t==='manual');
+                document.getElementById('input_file_container').classList.toggle('hidden', t!=='file');
+                document.getElementById('input_manual_container').classList.toggle('hidden', t!=='manual');
             }}
 
-            function toggleMode() {{
-                mode = mode === 'login' ? 'signup' : 'login';
-                document.getElementById('confirm-box').classList.toggle('hidden');
-                document.getElementById('btnAuth').innerText = mode === 'login' ? 'Entrar' : 'Confirmar Cadastro';
-                document.getElementById('btnSwitch').innerText = mode === 'login' ? 'Criar Nova Conta Acadêmica' : 'Voltar para o Login';
-            }}
-
-            async function handleAuth() {{
-                const email = document.getElementById('email').value;
-                const password = document.getElementById('password').value;
-                const confirmPassword = document.getElementById('confirmPassword').value;
-
-                if (!email || !password) return alert("Por favor, preencha os dados de acesso.");
-                if (mode === 'signup' && password !== confirmPassword) return alert("As senhas não conferem!");
-
-                const btn = document.getElementById('btnAuth');
-                btn.innerText = "PROCESSANDO...";
-                btn.disabled = true;
-
-                try {{
-                    let result;
-                    if (mode === 'login') {{
-                        result = await _supabase.auth.signInWithPassword({{ email, password }});
-                    }} else {{
-                        result = await _supabase.auth.signUp({{ email, password }});
-                        if (!result.error) alert("Conta criada com sucesso! Você já pode logar.");
-                    }}
-
-                    if (result.error) throw result.error;
-                    if (mode === 'login') location.reload();
-                    
-                }} catch (e) {{
-                    alert("Atenção: " + e.message);
-                }} finally {{
-                    btn.innerText = mode === 'login' ? 'Entrar' : 'Confirmar Cadastro';
-                    btn.disabled = false;
-                }}
-            }}
-
-            async function checkUser() {{
-                const {{ data: {{ user }} }} = await _supabase.auth.getUser();
-                if (user) {{
-                    document.getElementById('login-section').classList.add('hidden');
-                    document.getElementById('main-section').classList.remove('hidden');
-                    document.getElementById('user-display').innerText = user.email.toLowerCase();
-                    
-                    if (user.email.toLowerCase() === ADMIN_EMAIL) {{
-                        document.getElementById('paywall').innerHTML = '<div class="bg-green-100 text-green-800 p-3 rounded-xl border border-green-200 font-black italic tracking-widest uppercase text-[10px]">✓ Administrador Master Reconhecido</div>';
-                    }}
-                }}
-            }}
-            checkUser();
-
-            async function logout() {{
-                await _supabase.auth.signOut();
+            async function auth(type) {{
+                const e = document.getElementById('email').value;
+                const p = document.getElementById('password').value;
+                if(type==='login') await _supabase.auth.signInWithPassword({{email:e, password:p}});
+                else await _supabase.auth.signUp({{email:e, password:p}});
                 location.reload();
             }}
 
-            async function calcular() {{
-                const file = document.getElementById('arquivo').files[0];
-                if(!file) return alert("Anexe um arquivo primeiro.");
-                const btn = document.getElementById('btnCalc');
-                btn.innerText = "CALCULANDO...";
-                const fd = new FormData();
-                fd.append('file', file);
-
-                try {{
-                    const r = await fetch('/analisar', {{ method: 'POST', body: fd }});
-                    const d = await r.json();
-                    document.getElementById('resultado').classList.remove('hidden');
-                    document.getElementById('res_tb').innerText = d.tb_estimada + " °C";
-                    document.getElementById('res_r2').innerText = d.r2.toFixed(4);
-                    window.scrollTo({{ top: document.body.scrollHeight, behavior: 'smooth' }});
-                }} catch(e) {{
-                    alert("Erro técnico na análise de regressão.");
-                }} finally {{
-                    btn.innerText = "Analisar Campo";
+            async function checkUser() {{
+                const {{data:{{user}}}} = await _supabase.auth.getUser();
+                if(user) {{
+                    document.getElementById('login-section').classList.add('hidden');
+                    document.getElementById('main-section').classList.remove('hidden');
+                    document.getElementById('user-display').innerText = user.email.toLowerCase();
+                    if(user.email.toLowerCase() === ADMIN_EMAIL) document.getElementById('admin-badge').classList.remove('hidden');
                 }}
             }}
+            checkUser();
+            function logout() {{ _supabase.auth.signOut(); location.reload(); }}
 
-            async function pagar() {{
-                const r = await fetch('/checkout-stripe');
-                const d = await r.json();
-                window.location.href = d.url;
+            async function calcular() {{
+                const btn = document.getElementById('btnCalc');
+                const analise_nome = document.getElementById('analise_nome').value || "Nova Análise";
+                const file = document.getElementById('arquivo').files[0];
+                const manual = document.getElementById('manual_data').value;
+                const tmin = document.getElementById('tb_min').value;
+                const tmax = document.getElementById('tb_max').value;
+                const passo = document.getElementById('passo').value;
+
+                if(currentTab==='file' && !file) return alert("Selecione o arquivo meteorológico!");
+                
+                btn.innerText = "SINCRO MODELO...";
+                btn.disabled = true;
+
+                const fd = new FormData();
+                if(currentTab === 'file') fd.append('file', file);
+                else fd.append('manual_data', manual);
+                
+                fd.append('tmin', tmin);
+                fd.append('tmax', tmax);
+                fd.append('passo', passo);
+
+                try {{
+                    const response = await fetch('/analisar', {{ method: 'POST', body: fd }});
+                    const d = await response.json();
+
+                    document.getElementById('results_area').classList.remove('hidden');
+                    document.getElementById('display_nome_analise').innerText = "🔬 Result: " + analise_nome;
+                    document.getElementById('res_tb').innerText = d.best_result.temperatura + " °C";
+                    document.getElementById('res_r2').innerText = d.best_result.r2.toFixed(4);
+                    document.getElementById('res_qme').innerText = d.best_result.qme.toFixed(6);
+
+                    // Tabela
+                    let htmlTable = '<table class="w-full text-left"><thead><tr class="bg-slate-50"><th>Data</th><th>Tmin</th><th>Tmax</th><th>NF</th></tr></thead><tbody>';
+                    d.preview.forEach(row => {{
+                        htmlTable += `<tr class="border-b"><td>${{row.Data}}</td><td>${{row.Tmin}}</td><td>${{row.Tmax}}</td><td>${{row.NF}}</td></tr>`;
+                    }});
+                    document.getElementById('table_preview').innerHTML = htmlTable + "</tbody></table>";
+
+                    // Graf QME
+                    Plotly.newPlot('graph-qme', [{{
+                        x: d.qme_data.temp, y: d.qme_data.qme,
+                        type: 'scatter', mode: 'lines+markers', marker: {{color:'black'}}, line: {{color:'black'}}
+                    }}], {{ title: 'QME vs Tb', xaxis:{{title:'°C'}}, yaxis:{{title:'Erro'}}, height: 350 }});
+
+                    // Graf Regressao
+                    Plotly.newPlot('graph-reg', [
+                        {{ x: d.reg.sta, y: d.reg.nf, mode: 'markers', marker: {{color:'gray'}} }},
+                        {{ x: d.reg.sta, y: d.reg.predict, mode: 'lines', line: {{color:'black', dash:'dot'}} }}
+                    ], {{ title: 'Regressão / Intercepto', xaxis:{{title:'STa'}}, yaxis:{{title:'Folhas'}}, height: 350, showlegend:false }});
+
+                }} catch(e) {{
+                    alert("Dados inválidos ou formato incorreto. Verifique as colunas (Data, Tmin, Tmax, NF).");
+                }} finally {{
+                    btn.innerText = "Analisar Dados"; btn.disabled = false;
+                }}
             }}
         </script>
     </body>
     </html>
     """
 
-# Funções Analisar e Stripe sem alterações (mantendo chaves Python seguras)
 @app.post("/analisar")
-async def analisar_dados(file: UploadFile = File(...)):
-    content = await file.read()
+async def analisar_dados(
+    file: UploadFile = None, 
+    manual_data: str = Form(None),
+    tmin: float = Form(0.0),
+    tmax: float = Form(20.0),
+    passo: float = Form(0.5)
+):
     try:
-        if file.filename.endswith('.csv'):
-            df = pd.read_csv(BytesIO(content), sep=None, engine='python')
+        # Define qual fonte de dados usar
+        if file:
+            content = await file.read()
+            if file.filename.endswith('.csv'):
+                df = pd.read_csv(BytesIO(content), sep=None, engine='python')
+            else:
+                df = pd.read_excel(BytesIO(content))
+        elif manual_data:
+            # Converte texto CSV em DataFrame
+            from io import StringIO
+            data = StringIO(manual_data)
+            df = pd.read_csv(data, names=['Data', 'Tmin', 'Tmax', 'NF'], header=None)
         else:
-            df = pd.read_excel(BytesIO(content))
+            raise HTTPException(status_code=400, detail="Sem dados.")
+
         df = rename_columns(df)
         df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
-        resultado = executar_calculo_tb(df, 0, 20, 0.5)
-        return {"tb_estimada": round(resultado['melhor_resultado']['Temperatura (ºC)'], 2), "r2": resultado['melhor_resultado']['R2']}
+        
+        # O Motor
+        res = executar_calculo_tb(df, tmin, tmax, passo)
+        
+        # Mapeamento para gráficos e retorno
+        met_df = pd.DataFrame(res['tabela_meteorologica'])
+        best_tb_str = str(round(res['melhor_resultado']['Temperatura (ºC)'], 2))
+        idx_nf = [i for i, v in enumerate(df['NF']) if not pd.isna(v)]
+
+        return {
+            "best_result": {
+                "temperatura": res['melhor_resultado']['Temperatura (ºC)'],
+                "r2": res['melhor_resultado']['R2'],
+                "qme": res['melhor_resultado']['QME']
+            },
+            "preview": df.head(10).astype(str).to_dict(orient="records"),
+            "qme_data": {
+                "temp": [x['Temperatura (ºC)'] for x in res['tabela_erros']],
+                "qme": [x['QME'] for x in res['tabela_erros']]
+            },
+            "reg": {
+                "sta": [met_df.iloc[i][best_tb_str] for i in idx_nf],
+                "nf": df['NF'].dropna().tolist(),
+                "predict": [
+                    met_df.iloc[i][best_tb_str] * res['melhor_resultado']['Coef_Angular'] + res['melhor_resultado']['Intercepto'] 
+                    for i in idx_nf
+                ]
+            }
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/checkout-stripe")
-def criar_checkout():
-    session = stripe.checkout.Session.create(
-        payment_method_types=['card', 'pix'],
-        line_items=[{'price_data': {'currency': 'brl', 'product_data': {'name': 'Licença EstimaTB Pro'}, 'unit_amount': 2990}, 'quantity': 1}],
-        mode='payment',
-        success_url='https://temperatura-basal.onrender.com', cancel_url='https://temperatura-basal.onrender.com',
-    )
-    return {"url": session.url}
