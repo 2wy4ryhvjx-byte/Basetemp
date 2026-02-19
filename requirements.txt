@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+pandas
+scikit-learn
+stripe
+supabase
+numpy
+openpyxl
+xlsxwriter
