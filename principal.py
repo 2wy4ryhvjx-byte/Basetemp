@@ -8,7 +8,14 @@ from motor import executar_calculo_tb, rename_columns
 
 app = FastAPI()
 
-# Carregamento seguro das variáveis de ambiente
+# Carregamento e Diagnóstico
+s_url = os.getenv("SUPABASE_URL", "")
+s_key = os.getenv("SUPABASE_KEY", "")
+
+# Isso vai imprimir nos Logs do Render para você conferir:
+print(f"DIAGNÓSTICO SUPABASE - URL ENCONTRADA: {s_url[:10]}...") 
+print(f"DIAGNÓSTICO SUPABASE - KEY ENCONTRADA: {s_key[:10]}...")
+
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 EMAIL_ADMIN = "abielgm@icloud.com"
 
