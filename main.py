@@ -12,37 +12,31 @@ from sklearn.metrics import mean_squared_error
 app = FastAPI()
 
 # =========================================================================
-# CONFIGURAÇÕES DE ACESSO (PROTEGIDO)
+# CONFIGURAÇÕES (MANTER ESTAS CHAVES)
 # =========================================================================
-S_URL = "https://iuhtopexunirguxmjiey.supabase.co"
-S_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1aHRvcGV4dW5pcmd1eG1qaWV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MjIzNTcsImV4cCI6MjA4NzA5ODM1N30.EjDui9gQ5AlRaNpoVQisGUoXmK3j74gwzq9QSguxq78"
+SURL = "https://iuhtopexunirguxmjiey.supabase.co"
+SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1aHRvcGV4dW5pcmd1eG1qaWV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MjIzNTcsImV4cCI6MjA4NzA5ODM1N30.EjDui9gQ5AlRaNpoVQisGUoXmK3j74gwzq9QSguxq78"
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
-EMAIL_ADMIN = "abielgm@icloud.com"
+ADM_MAIL = "abielgm@icloud.com"
 
-# =========================================================================
-# FUNÇÕES CIENTÍFICAS INTEGRADAS
-# =========================================================================
-def normalize_txt(text):
-    if not isinstance(text, str): return text
-    return "".join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c)).lower().replace(" ", "").replace("_", "")
+# --- AUXILIARES ---
+def normalize(t):
+    if not isinstance(t, str): return t
+    return "".join(c for c in unicodedata.normalize('NFKD', t) if not unicodedata.combining(c)).lower().strip()
 
-def preparar_dataframe(df):
-    COLUMN_MAP = {'data': 'Data', 'tmin': 'Tmin', 'tmín': 'Tmin', 'tmax': 'Tmax', 'tmáx': 'Tmax', 'nf': 'NF', 'variavel': 'NF'}
-    df.rename(columns=lambda col: COLUMN_MAP.get(normalize_txt(col), col), inplace=True)
-    
-    # Tratamento de datas brasileiras e tipos numéricos
-    df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
-    for c in ['Tmin', 'Tmax', 'NF']:
-        df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '.').replace('nan', np.nan), errors='coerce')
-    
-    return df.dropna(subset=['Data', 'Tmin', 'Tmax']).sort_values('Data')
+def limpar_colunas(df):
+    cols = {normalize(c): c for c in df.columns}
+    mapping = {'data': 'Data', 'tmin': 'Tmin', 'tmax': 'Tmax', 'nf': 'NF', 'variavel': 'NF'}
+    new_cols = {}
+    for k, v in mapping.items():
+        for ck in cols:
+            if k in ck: new_cols[cols[ck]] = v
+    df.rename(columns=new_cols, inplace=True)
+    return df
 
-# =========================================================================
-# INTERFACE WEB (HTML/JS)
-# =========================================================================
 @app.get("/", response_class=HTMLResponse)
-async def interface():
-    html_content = """
+async def workstation():
+    return """
     <!DOCTYPE html>
     <html lang="pt-br">
     <head>
@@ -52,95 +46,77 @@ async def interface():
         <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <style>
-            .spreadsheet-in { width: 100%; border: 1px solid #e2e8f0; padding: 6px; font-size: 11px; text-align: center; outline: none; font-family: monospace; }
-            .spreadsheet-in:focus { background-color: #f0fdf4; border-color: #16a34a; }
-            .header-lab { background: #f8fafc; font-size: 10px; font-weight: 900; color: #64748b; padding: 10px; border: 1px solid #e2e8f0; text-transform: uppercase; }
+            .in-sheet { width: 100%; border: 1px solid #e2e8f0; padding: 6px; font-size: 11px; text-align: center; outline: none; font-family: monospace; }
+            .in-sheet:focus { background: #f0fdf4; border-color: #16a34a; }
+            .th-lab { background: #f8fafc; font-size: 10px; font-weight: 900; color: #475569; padding: 10px; border: 1px solid #e2e8f0; text-transform: uppercase; }
         </style>
     </head>
-    <body class="bg-slate-50 font-sans min-h-screen">
-        
-        <div id="loader" class="hidden fixed inset-0 bg-white/95 flex items-center justify-center z-50 flex-col">
-            <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-green-700 mb-4"></div>
-            <p class="font-black text-green-900 animate-pulse italic">PROCESSANDO MODELO CIENTÍFICO...</p>
+    <body class="bg-slate-100 font-sans min-h-screen text-slate-800">
+        <div id="loader" class="hidden fixed inset-0 bg-white/90 z-50 flex flex-col items-center justify-center italic font-black text-green-700">
+            <div class="animate-spin rounded-full h-14 w-14 border-t-4 border-green-600 mb-4"></div>
+            SINCRO_PROCESSAMENTO EM CURSO...
         </div>
 
         <div class="max-w-6xl mx-auto p-4 md:p-10">
-            <!-- TELA DE LOGIN -->
-            <div id="login-section" class="max-w-md mx-auto bg-white p-10 rounded-[2.5rem] shadow-2xl mt-12 text-center border">
-                <h1 class="text-4xl font-black text-green-700 italic mb-1 italic">EstimaTB🌿</h1>
-                <p class="text-[9px] font-bold text-slate-300 uppercase tracking-widest mb-8 italic">Scientific Lab Workspace</p>
-                <div class="space-y-4">
-                    <input type="email" id="email" placeholder="E-mail Acadêmico" class="w-full border-2 p-4 rounded-2xl outline-none focus:border-green-600 bg-slate-50">
-                    <input type="password" id="password" placeholder="Senha" class="w-full border-2 p-4 rounded-2xl outline-none focus:border-green-600 bg-slate-50">
-                    <button onclick="auth('login')" id="btnLogin" class="w-full bg-green-600 text-white py-4 rounded-2xl font-black shadow-lg">ENTRAR</button>
-                    <button onclick="toggleMode()" id="btnSwitch" class="text-green-600 font-bold text-[10px] uppercase mt-2">Criar Cadastro</button>
-                </div>
+            <!-- LOGIN -->
+            <div id="login-section" class="max-w-md mx-auto bg-white p-10 rounded-[3rem] shadow-2xl mt-12 border text-center">
+                <h1 class="text-4xl font-black text-green-700 italic mb-2 tracking-tighter uppercase underline decoration-yellow-400">EstimaTB🌿</h1>
+                <p class="text-[9px] font-bold text-slate-300 uppercase tracking-widest mb-8 italic">Environment v1.0</p>
+                <input type="email" id="email" placeholder="E-mail" class="w-full border-2 p-4 rounded-2xl mb-4 outline-none focus:border-green-600">
+                <input type="password" id="password" placeholder="Senha" class="w-full border-2 p-4 rounded-2xl mb-6 outline-none focus:border-green-600">
+                <button onclick="auth('login')" class="w-full bg-green-600 text-white py-4 rounded-2xl font-black shadow-lg">ENTRAR</button>
+                <button onclick="toggleMode()" id="btnSw" class="text-green-600 font-bold text-[9px] uppercase mt-4 block mx-auto">Criar Cadastro Acadêmico</button>
             </div>
 
             <!-- DASHBOARD -->
-            <div id="main-section" class="hidden">
-                <div class="flex justify-between items-center bg-white p-6 rounded-[2rem] shadow-sm border mb-8 px-10">
-                    <p class="text-slate-400 font-bold text-xs">Researcher: <span id="user-display" class="text-green-700 font-black not-italic uppercase tracking-tight"></span></p>
-                    <button onclick="logout()" class="text-red-500 font-black text-[10px] uppercase underline transition-all italic">Encerrar Lab</button>
+            <div id="main-section" class="hidden animate-in fade-in duration-500">
+                <div class="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-[2rem] shadow-sm border mb-6 px-10 gap-4">
+                    <p class="text-slate-400 font-bold text-xs uppercase tracking-tighter italic">Researcher: <span id="user-display" class="text-green-700 font-black not-italic ml-1"></span></p>
+                    <button onclick="sair()" class="text-red-500 font-black text-[10px] uppercase underline hover:scale-105 transition-all">Sair do Sistema</button>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    <!-- Config Side -->
-                    <div class="lg:col-span-5 space-y-6">
-                        <div class="bg-white p-8 rounded-[2.5rem] shadow-xl border">
-                            <h3 class="font-black text-slate-800 text-[11px] uppercase mb-6 flex items-center border-b pb-4 italic"><i class="fas fa-microscope mr-2 text-green-600"></i>Parâmetros do Experimento</h3>
-                            
-                            <input type="text" id="analise_nome" placeholder="Identificação da Amostra" class="w-full border-2 p-4 rounded-2xl mb-6 bg-slate-50 text-sm focus:border-green-600 outline-none">
+                <div class="grid lg:grid-cols-12 gap-8">
+                    <!-- Configurações -->
+                    <div class="lg:col-span-5 bg-white p-8 rounded-[2.5rem] shadow-xl border">
+                        <input type="text" id="estudo_id" placeholder="Nome do Experimento / Amostra" class="w-full border-2 p-4 rounded-2xl mb-6 bg-slate-50 text-sm font-bold focus:border-green-500 outline-none">
 
-                            <div class="flex bg-slate-100 p-1 rounded-2xl mb-6">
-                                <button onclick="setTab('f')" id="tab-f" class="flex-1 py-3 text-[10px] font-black rounded-xl bg-white shadow-sm text-green-700 uppercase">Arquivo Anexo</button>
-                                <button onclick="setTab('m')" id="tab-m" class="flex-1 py-3 text-[10px] font-black rounded-xl text-slate-400 uppercase italic">Colar Excel</button>
-                            </div>
-
-                            <div id="ui-f"><input type="file" id="arquivo" class="block w-full border-2 border-dashed p-10 rounded-2xl bg-slate-50 cursor-pointer text-xs"></div>
-
-                            <div id="ui-m" class="hidden">
-                                <div class="bg-white rounded-xl border overflow-hidden shadow-inner mb-2 max-h-80 overflow-y-auto">
-                                    <table class="w-full border-collapse" id="spreadsheet">
-                                        <thead>
-                                            <tr>
-                                                <th class="header-lab">Data</th>
-                                                <th class="header-lab">Min</th>
-                                                <th class="header-lab">Max</th>
-                                                <th class="header-lab">Variável</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="manual-body"></tbody>
-                                    </table>
-                                </div>
-                                <button onclick="addRow(10)" class="text-[9px] font-black text-green-600 uppercase mb-4 tracking-tighter underline">+ Linhas</button>
-                            </div>
-
-                            <div class="bg-slate-50 p-6 rounded-3xl border text-center shadow-inner mt-4">
-                                <div class="grid grid-cols-3 gap-2">
-                                    <div><label class="text-[8px] font-bold block">Min</label><input type="number" id="tmin" value="0.0" class="w-full border p-2 rounded-xl text-center font-bold"></div>
-                                    <div><label class="text-[8px] font-bold block">Max</label><input type="number" id="tmax" value="20.0" class="w-full border p-2 rounded-xl text-center font-bold"></div>
-                                    <div><label class="text-[8px] font-bold block text-green-700">Passo</label><input type="number" id="passo" value="0.5" step="0.1" class="w-full border p-2 rounded-xl text-center font-bold border-green-200"></div>
-                                </div>
-                            </div>
-
-                            <button onclick="processar()" id="btnCalc" class="mt-8 w-full bg-green-600 text-white py-5 rounded-[1.8rem] font-black text-xl shadow-xl hover:scale-105 transition-all">ANALISAR CAMPO</button>
+                        <div class="flex bg-slate-100 p-1 rounded-2xl mb-6 shadow-inner">
+                            <button onclick="aba('f')" id="b-f" class="flex-1 py-3 text-[10px] font-black rounded-xl bg-white shadow text-green-700 uppercase italic">Arquivo</button>
+                            <button onclick="aba('m')" id="b-m" class="flex-1 py-3 text-[10px] font-black rounded-xl text-slate-400 uppercase italic tracking-tighter">Digitação/Cola</button>
                         </div>
+
+                        <div id="u-f" class="mb-6"><input type="file" id="arquivo" class="block w-full border-2 border-dashed p-10 rounded-2xl bg-slate-50 text-xs font-bold text-slate-400"></div>
+
+                        <div id="u-m" class="hidden mb-6">
+                            <div class="overflow-x-auto rounded-2xl border mb-2 max-h-80 shadow-inner">
+                                <table class="w-full border-collapse">
+                                    <thead><tr><th class="th-lab">Data</th><th class="th-lab">T-Mín</th><th class="th-lab">T-Máx</th><th class="th-lab text-green-700 italic font-black">Var (NF)</th></tr></thead>
+                                    <tbody id="m-body"></tbody>
+                                </table>
+                            </div>
+                            <div class="flex justify-between p-2"><button onclick="addR(10)" class="text-[9px] font-bold text-green-600 underline uppercase tracking-widest">+ Linhas</button><button onclick="resM()" class="text-[9px] font-bold text-red-400 uppercase italic">Limpar Tudo</button></div>
+                        </div>
+
+                        <div class="bg-slate-50 p-6 rounded-3xl border text-center grid grid-cols-3 gap-3 mb-8 shadow-inner">
+                            <div class="flex flex-col"><label class="text-[8px] font-bold text-slate-400">T-MÍN</label><input type="number" id="v-min" value="0.0" class="w-full border p-2 rounded-xl text-center font-bold"></div>
+                            <div class="flex flex-col"><label class="text-[8px] font-bold text-slate-400">T-MÁX</label><input type="number" id="v-max" value="20.0" class="w-full border p-2 rounded-xl text-center font-bold"></div>
+                            <div class="flex flex-col"><label class="text-[8px] font-bold text-green-600 underline">PASSO</label><input type="number" id="v-step" value="0.5" step="0.1" class="w-full border p-2 rounded-xl text-center font-bold text-green-600 border-green-200"></div>
+                        </div>
+
+                        <button onclick="run()" class="w-full bg-green-600 text-white py-5 rounded-[1.8rem] font-black text-xl shadow-xl hover:scale-[1.03] transition-all uppercase tracking-widest">Processar Análise</button>
                     </div>
 
-                    <!-- Saída Gráfica -->
-                    <div id="results-col" class="lg:col-span-7 hidden animate-in slide-in-from-right">
-                        <div class="bg-white p-10 rounded-[3.5rem] shadow-2xl border-t-[14px] border-slate-900 mb-8 h-fit sticky top-10">
-                            <h2 class="text-xl font-black italic border-b pb-4 mb-10 text-slate-800" id="final-name">🔬 Resultados Encontrados</h2>
-                             <div class="grid grid-cols-3 gap-4 mb-10 text-center">
-                                <div class="bg-slate-50 p-6 rounded-3xl border shadow-inner"><p class="text-[9px] font-black text-slate-400">Tb (°C)</p><p id="v-tb" class="text-4xl font-black font-mono tracking-tighter">--</p></div>
-                                <div class="bg-slate-50 p-6 rounded-3xl border border-green-50 shadow-inner"><p class="text-[9px] font-black text-green-600">Ajuste R²</p><p id="v-r2" class="text-4xl font-black font-mono text-green-700">--</p></div>
-                                <div class="bg-slate-50 p-6 rounded-3xl border shadow-inner"><p class="text-[9px] font-black text-slate-400 italic">Erro QME</p><p id="v-qme" class="text-[12px] font-bold font-mono">--</p></div>
+                    <!-- Saída -->
+                    <div id="res-col" class="lg:col-span-7 hidden animate-in slide-in-from-right duration-500">
+                        <div class="bg-white p-10 rounded-[3rem] shadow-2xl border-t-[14px] border-slate-900 sticky top-10">
+                            <div class="grid grid-cols-3 gap-4 mb-8">
+                                <div class="bg-slate-50 p-4 rounded-3xl text-center shadow-inner"><p class="text-[9px] font-black text-slate-300 italic uppercase">Temperatura Basal</p><p id="out-tb" class="text-4xl font-black font-mono tracking-tighter">--</p></div>
+                                <div class="bg-slate-50 p-4 rounded-3xl text-center border-2 border-green-50 shadow-inner"><p class="text-[9px] font-black text-green-700 italic uppercase">Ajuste (R²)</p><p id="out-r2" class="text-4xl font-black font-mono text-green-600 tracking-tighter">--</p></div>
+                                <div class="bg-slate-50 p-4 rounded-3xl text-center shadow-inner"><p class="text-[9px] font-black text-slate-300 italic uppercase">Min QME</p><p id="out-qme" class="text-[12px] font-bold font-mono">--</p></div>
                              </div>
-                             
                              <div class="space-y-6">
-                                <div id="gr-qme" class="h-64 border-2 rounded-3xl bg-white shadow-inner overflow-hidden"></div>
-                                <div id="gr-reg" class="h-64 border-2 rounded-3xl bg-white shadow-inner overflow-hidden"></div>
+                                <div id="gr1" class="h-64 border rounded-3xl"></div>
+                                <div id="gr2" class="h-64 border rounded-3xl"></div>
                              </div>
                         </div>
                     </div>
@@ -149,48 +125,45 @@ async def interface():
         </div>
 
         <script>
-            const SURL = "CONFIG_SURL"; const SKEY = "CONFIG_SKEY"; const MASTER = "abielgm@icloud.com";
-            const _supabase = supabase.createClient(SURL, SKEY);
-            let activeTab = 'f';
+            const SU = "U_VAL"; const SK = "K_VAL"; const AD = "abielgm@icloud.com";
+            const _supabase = supabase.createClient(SU, SK);
+            let inputMode = 'f'; let loginMode = 'login';
 
-            function initGrid() { document.getElementById('manual-body').innerHTML = ''; addRow(15); }
-            function addRow(n) {
-                const b = document.getElementById('manual-body');
+            function resM() { document.getElementById('m-body').innerHTML = ''; addR(25); }
+            function addR(n) {
                 for(let i=0;i<n;i++) {
-                    const r = document.createElement('tr');
-                    r.innerHTML = '<td><input type="text" class="spreadsheet-in dat"></td><td><input type="text" class="spreadsheet-in tmi"></td><td><input type="text" class="spreadsheet-in tma"></td><td><input type="text" class="spreadsheet-in nfc"></td>';
-                    b.appendChild(r);
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = '<td><input type="text" class="in-sheet dat"></td><td><input type="text" class="in-sheet tmi"></td><td><input type="text" class="in-sheet tma"></td><td><input type="text" class="in-sheet v-nf" placeholder="..."></td>';
+                    document.getElementById('m-body').appendChild(tr);
                 }
             }
-            initGrid();
+            resM();
 
-            // FUNÇÃO CTRL+V EXCEL
-            document.addEventListener('paste', function(e) {
-                if(e.target.classList.contains('spreadsheet-in')) {
+            // CTRL+V SUPORTE
+            document.addEventListener('paste', e => {
+                if(e.target.classList.contains('in-sheet')) {
                     e.preventDefault();
-                    const clip = e.clipboardData.getData('text');
-                    const rows = clip.split(/\\r?\\n/);
-                    let tr = e.target.closest('tr');
-                    rows.forEach(rStr => {
-                        if(rStr.trim()==='') return;
-                        const dataCells = rStr.split('\\t');
-                        const inputs = tr.querySelectorAll('input');
-                        dataCells.forEach((val, i) => { if(inputs[i]) inputs[i].value = val.trim(); });
-                        tr = tr.nextElementSibling;
-                        if(!tr) { addRow(1); tr = document.getElementById('manual-body').lastElementChild; }
+                    const clip = e.clipboardData.getData('text').split(/\\r?\\n/);
+                    let row = e.target.closest('tr');
+                    clip.forEach(txt => {
+                        if(!txt.trim()) return;
+                        const cells = txt.split('\\t'), ins = row.querySelectorAll('input');
+                        cells.forEach((v, idx) => { if(ins[idx]) ins[idx].value = v.trim(); });
+                        row = row.nextElementSibling;
+                        if(!row) { addR(1); row = document.getElementById('m-body').lastElementChild; }
                     });
                 }
             });
 
             async function auth(t) {
-                const email = document.getElementById('email').value, password = document.getElementById('password').value;
+                const em = document.getElementById('email').value, ps = document.getElementById('password').value;
                 document.getElementById('loader').classList.remove('hidden');
-                let res = (t === 'login') ? await _supabase.auth.signInWithPassword({email, password}) : await _supabase.auth.signUp({email, password});
-                if(res.error) { alert("Autenticação: " + res.error.message); document.getElementById('loader').classList.add('hidden'); }
+                let r = (t==='login') ? await _supabase.auth.signInWithPassword({email:em, password:ps}) : await _supabase.auth.signUp({email:em, password:ps});
+                if(r.error) { alert("Autenticação: " + r.error.message); document.getElementById('loader').classList.add('hidden'); }
                 else location.reload();
             }
 
-            async function checkUser() {
+            async function checkS() {
                 const {data:{user}} = await _supabase.auth.getUser();
                 if(user) {
                     document.getElementById('login-section').classList.add('hidden');
@@ -198,123 +171,140 @@ async def interface():
                     document.getElementById('user-display').innerText = user.email.toLowerCase();
                 }
             }
-            checkUser();
-            async function logout() { await _supabase.auth.signOut(); localStorage.clear(); window.location.replace('/'); }
-
-            function setTab(t) {
-                activeTab = t;
-                document.getElementById('tab-f').classList.toggle('bg-white', t=='f');
-                document.getElementById('tab-m').classList.toggle('bg-white', t=='m');
-                document.getElementById('ui-f').classList.toggle('hidden', t=='m');
-                document.getElementById('ui-m').classList.toggle('hidden', t=='f');
+            checkS();
+            
+            async function sair() { 
+                await _supabase.auth.signOut();
+                localStorage.clear();
+                sessionStorage.clear();
+                window.location.replace('/'); 
             }
 
-            async function processar() {
+            function aba(t) {
+                inputMode = t;
+                document.getElementById('b-f').classList.toggle('bg-white', t=='f'); document.getElementById('b-m').classList.toggle('bg-white', t=='m');
+                document.getElementById('u-f').classList.toggle('hidden', t=='m'); document.getElementById('u-m').classList.toggle('hidden', t=='f');
+            }
+
+            async function run() {
                 document.getElementById('loader').classList.remove('hidden');
                 const fd = new FormData();
-                fd.append('nome_analise', document.getElementById('analise_nome').value || "Analise_Independente");
-                fd.append('tmin_p', document.getElementById('tmin').value);
-                fd.append('tmax_p', document.getElementById('tmax').value);
-                fd.append('passo_p', document.getElementById('passo').value);
+                fd.append('analise', document.getElementById('estudo_id').value);
+                fd.append('min', document.getElementById('v-min').value);
+                fd.append('max', document.getElementById('v-max').value);
+                fd.append('step', document.getElementById('v-step').value);
 
-                if(activeTab === 'f') {
-                    const fileInput = document.getElementById('arquivo');
-                    if(!fileInput.files[0]) { alert("Anexe o arquivo meteorológico!"); document.getElementById('loader').classList.add('hidden'); return; }
-                    fd.append('file', fileInput.files[0]);
+                if(inputMode === 'f') {
+                    const f = document.getElementById('arquivo').files[0];
+                    if(!f) { alert("Anexe o arquivo meteorológico!"); document.getElementById('loader').classList.add('hidden'); return; }
+                    fd.append('file', f);
                 } else {
-                    let dArr = [];
-                    document.querySelectorAll('#manual-body tr').forEach(tr => {
+                    let d = [];
+                    document.querySelectorAll('#m-body tr').forEach(tr => {
                         const vals = Array.from(tr.querySelectorAll('input')).map(i => i.value.trim());
-                        if(vals[0] && vals[1]) dArr.push(vals.join(','));
+                        if(vals[0] && vals[1]) d.push(vals.join(','));
                     });
-                    if(dArr.length < 3) { alert("Dados insuficientes para regressão linear."); document.getElementById('loader').classList.add('hidden'); return; }
-                    fd.append('manual_data', dArr.join('\\n'));
+                    if(d.length < 3) { alert("Dados insuficientes para regressão."); document.getElementById('loader').classList.add('hidden'); return; }
+                    fd.append('manual', d.join('\\n'));
                 }
 
                 try {
-                    const response = await fetch('/api_processamento', {method:'POST', body:fd});
-                    const d = await response.json();
+                    const res = await fetch('/api/v1/analisar', {method:'POST', body:fd});
+                    const d = await res.json();
                     if(d.detail) throw new Error(d.detail);
 
-                    document.getElementById('results-col').classList.remove('hidden');
-                    document.getElementById('v-tb').innerText = d.res.temp + "°";
-                    document.getElementById('v-r2').innerText = d.res.r2.toFixed(4);
-                    document.getElementById('v-qme').innerText = d.res.qme.toFixed(6);
-                    document.getElementById('final-name').innerText = "🔬 Result: " + d.identidade;
+                    document.getElementById('res-col').classList.remove('hidden');
+                    document.getElementById('out-tb').innerText = d.best.temp + "°";
+                    document.getElementById('out-r2').innerText = d.best.r2.toFixed(4);
+                    document.getElementById('out-qme').innerText = d.best.qme.toFixed(8);
 
-                    // Plotly P&B Estilo Publicação
-                    Plotly.newPlot('gr-qme', [{x:d.plt.qme_x, y:d.plt.qme_y, mode:'lines+markers', line:{color:'black'}}], {title:'Mínimo Residual QME', margin:{t:40}});
-                    Plotly.newPlot('gr-reg', [{x:d.plt.reg_x, y:d.plt.reg_y, mode:'markers', marker:{color:'gray'}}, {x:d.plt.reg_x, y:d.plt.reg_pred, mode:'lines', line:{color:'black', dash:'dot'}}], {title:'Regressão: NF vs Soma Térmica', margin:{t:40}, showlegend:false});
-
+                    Plotly.newPlot('gr1', [{x: d.plt.q_x, y: d.plt.q_y, mode:'lines+markers', line:{color:'black'}}], {title:'Mínimo Residual QME (Estabilidade)', margin:{t:40}});
+                    Plotly.newPlot('gr2', [{x: d.plt.r_x, y: d.plt.r_y, mode:'markers', marker:{color:'gray'}}, {x: d.plt.r_x, y: d.plt.r_p, mode:'lines', line:{color:'black', dash:'dot'}}], {title:'Modelo: NF vs STa Acumulada', showlegend:false, margin:{t:40}});
                     window.scrollTo({top: document.body.scrollHeight, behavior:'smooth'});
                 } catch(e) {
-                    alert("ALERTA TÉCNICO: Falha na análise. Verifique se: \\n1. As medições da variável estão aumentando progressivamente.\\n2. Existem ao menos 3 pontos com NF informado.");
+                    alert(e.message || "Falha técnica nos dados.");
                 } finally { document.getElementById('loader').classList.add('hidden'); }
             }
         </script>
     </body>
     </html>
-    """.replace("CONFIG_SURL", S_URL).replace("CONFIG_SKEY", S_KEY)
-    return html_content
+    """.replace("U_VAL", SURL).replace("K_VAL", SKEY)
 
-# =========================================================================
-# BACKEND: MOTOR CIENTÍFICO UNIFICADO
-# =========================================================================
-@app.post("/api_processamento")
-async def rodar_motor_unificado(
-    file: UploadFile = None, manual_data: str = Form(None),
-    nome_analise: str = Form(""), tmin_p: float = Form(0.0), tmax_p: float = Form(20.0), passo_p: float = Form(0.5)
+@app.post("/api/v1/analisar")
+async def processamento_tb(
+    file: UploadFile = None, manual: str = Form(None),
+    analise: str = Form(""), min: float = Form(0.0), max: float = Form(20.0), step: float = Form(0.5)
 ):
     try:
-        # Carregamento do DF
         if file:
-            c = await file.read()
-            df = pd.read_csv(BytesIO(c), sep=None, engine='python', decimal=',') if file.filename.endswith('.csv') else pd.read_excel(BytesIO(c))
+            content = await file.read()
+            if file.filename.endswith('.csv'):
+                df = pd.read_csv(BytesIO(content), sep=None, engine='python', decimal=',')
+            else:
+                df = pd.read_excel(BytesIO(content))
         else:
-            df = pd.read_csv(StringIO(manual_data), names=['Data', 'Tmin', 'Tmax', 'NF'], header=None)
+            df = pd.read_csv(StringIO(manual), names=['Data','Tmin','Tmax','NF'], header=None)
 
-        # Higiene
-        df = preparar_dataframe(df)
-        df['Tmed'] = (df['Tmin'] + df['Tmax']) / 2
-        p_df = df.dropna(subset=['NF']).copy() # Somente datas de avaliação
-
-        results_list = []
-        best_sta_data = {}
-        t_base_range = np.arange(tmin_p, tmax_p + passo_p, passo_p)
+        # 1. Higiene Radical dos Dados
+        df = limpar_colunas(df)
+        # Forçamos a limpeza de NF: strings vazias, 'None', 'nan' viram NaN do numpy
+        df['NF'] = pd.to_numeric(df['NF'].astype(str).str.replace(',', '.').replace('nan', np.nan), errors='coerce')
+        df['Tmin'] = pd.to_numeric(df['Tmin'].astype(str).str.replace(',', '.'), errors='coerce')
+        df['Tmax'] = pd.to_numeric(df['Tmax'].astype(str).str.replace(',', '.'), errors='coerce')
+        df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
         
-        for tb in t_base_range:
+        # Só dropamos linhas se a TEMPERATURA for vazia (precisamos delas para a Soma Térmica Acumulada)
+        df = df.dropna(subset=['Data', 'Tmin', 'Tmax']).sort_values('Data')
+
+        # Verificação se NF existe
+        if df['NF'].count() < 3:
+            raise ValueError(f"Foram encontradas apenas {df['NF'].count()} avaliações válidas na coluna NF/Variável. O motor precisa de no mínimo 3 pontos para a regressão.")
+
+        # 2. Motor de Cálculo
+        df['Tmed'] = (df['Tmin'] + df['Tmax']) / 2
+        p_idx = df.dropna(subset=['NF']).index # Datas com avaliação
+        
+        results = []
+        best_sta_dict = {}
+        t_range = np.arange(min, max + step, step)
+        
+        for tb in t_range:
             tb = round(float(tb), 2)
-            # Soma Térmica Acumulada Diária
+            # Soma Térmica Acumulada: Calculamos em todos os dias (cumsum), ignorando dias onde Tmed < Tb
             std = (df['Tmed'] - tb).clip(lower=0)
-            df['STa_temp'] = std.cumsum()
+            sta = std.cumsum()
             
-            # Seleciona STa apenas para os dias com NF
-            X = df.loc[p_df.index, 'STa_temp'].values.reshape(-1, 1)
-            y = p_df['NF'].values
+            # Para a regressão, pegamos apenas as datas em que houve avaliação (NF)
+            X = sta.loc[p_idx].values.reshape(-1, 1)
+            y = df.loc[p_idx, 'NF'].values
+            
+            # Garantir que y não tem lixo (NaN ou Infinity)
+            if np.any(np.isnan(y)): continue
             
             lr = LinearRegression().fit(X, y)
-            r2, qme = lr.score(X,y), mean_squared_error(y, lr.predict(X))
-            results_list.append({'Tb': tb, 'R2': r2, 'QME': qme, 'slope': lr.coef_[0], 'intercept': lr.intercept_})
-            best_sta_data[str(tb)] = df['STa_temp'].tolist()
+            qme = mean_squared_error(y, lr.predict(X))
+            results.append({'tb': tb, 'r2': lr.score(X,y), 'qme': qme, 'a': lr.coef_[0], 'b': lr.intercept_})
+            best_sta_dict[str(tb)] = sta.loc[p_idx].tolist()
 
-        res_df = pd.DataFrame(results_list)
-        campeao = res_df.loc[res_df['QME'].idxmin()]
-        c_str = str(round(float(campeao['Tb']), 2))
-        
-        idx_observado = p_df.index.tolist()
-        final_sta = [best_sta_data[c_str][i] for i in range(len(df)) if i in idx_observado]
+        if not results:
+            raise ValueError("Não foi possível realizar o cálculo. Verifique os valores de temperatura.")
+
+        # 3. Resultado Final
+        res_df = pd.DataFrame(results)
+        best = res_df.loc[res_df['qme'].idxmin()]
+        best_tb_str = str(round(best['tb'], 2))
 
         return {
-            "identidade": nome_analise,
-            "res": {"temp": float(campeao['Tb']), "r2": float(campeao['R2']), "qme": float(campeao['QME'])},
+            "best": {"temp": float(best['tb']), "r2": float(best['r2']), "qme": float(best['qme'])},
             "plt": {
-                "qme_x": res_df['Tb'].tolist(), "qme_y": res_df['QME'].tolist(),
-                "reg_x": [float(x) for x in final_sta],
-                "reg_y": p_df['NF'].astype(float).tolist(),
-                "reg_pred": [(x * campeao['slope'] + campeao['intercept']) for x in final_sta]
+                "q_x": res_df['tb'].tolist(), "q_y": res_df['qme'].tolist(),
+                "r_x": [float(x) for x in best_sta_dict[best_tb_str]],
+                "r_y": df.loc[p_idx, 'NF'].tolist(),
+                "r_p": [float(x * best['a'] + best['b']) for x in best_sta_dict[best_tb_str]]
             }
         }
     except Exception as e:
+        # Envia erro detalhado para o Alerta no Navegador
         import traceback
         print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"detail": str(e)}
