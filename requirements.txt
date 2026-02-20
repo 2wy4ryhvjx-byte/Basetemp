@@ -4,8 +4,7 @@ pandas
 numpy
 scikit-learn
 stripe
+supabase
 python-multipart
 openpyxl
 xlsxwriter
-supabase
-python-dotenv
