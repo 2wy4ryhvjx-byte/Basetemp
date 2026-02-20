@@ -13,41 +13,46 @@ from sklearn.metrics import mean_squared_error
 app = FastAPI()
 
 # =========================================================================
-# 🔒 BLOCO 1: LOGIN E SEGURANÇA (FIXO)
+# 🔒 BLOCO 1: CREDENCIAIS E LOGIN (MANTENHA ESTE BLOCO INALTERADO)
 # =========================================================================
 SURL = "https://iuhtopexunirguxmjiey.supabase.co"
 SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1aHRvcGV4dW5pcmd1eG1qaWV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MjIzNTcsImV4cCI6MjA4NzA5ODM1N30.EjDui9gQ5AlRaNpoVQisGUoXmK3j74gwzq9QSguxq78"
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
-ADM_MAIL = "abielgm@icloud.com"
+ADM_EMAIL = "abielgm@icloud.com"
 
 # =========================================================================
-# 🧬 BLOCO 2: MOTOR CIENTÍFICO E EXCEL
+# 🧬 BLOCO 2: PROCESSAMENTO EXCEL (xlsxwriter)
 # =========================================================================
-def fix_scientific_txt(t):
-    if not isinstance(t, str): return t
-    return "".join(c for c in unicodedata.normalize('NFKD', t) if not unicodedata.combining(c)).lower().strip()
-
-def build_excel_output(clima, erros, pheno, tb_final):
+def gerar_pacote_excel(clima_df, erro_df, regressao_df, tb_calc):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        clima.to_excel(writer, sheet_name='Base_Dados_Diarios', index=False)
-        pheno.to_excel(writer, sheet_name='Resultados_NF_vs_STa', index=False)
-        erros.to_excel(writer, sheet_name='Analise_Residual_QME', index=False)
-        wb = writer.book
-        f_dt = wb.add_format({'num_format': 'dd/mm/yyyy'})
-        if 'Resultados_NF_vs_STa' in writer.sheets:
-            writer.sheets['Resultados_NF_vs_STa'].set_column('A:A', 12, f_dt)
-        chart = wb.add_chart({'type': 'scatter', 'subtype': 'smooth'})
-        chart.add_series({'name': 'QME vs Tb', 'categories': ['Analise_Residual_QME', 1, 0, len(erros), 0], 'values': ['Analise_Residual_QME', 1, 2, len(erros), 2]})
-        writer.sheets['Analise_Residual_QME'].insert_chart('E2', chart)
+        clima_df.to_excel(writer, sheet_name='Base_Meteorologica', index=False)
+        regressao_df.to_excel(writer, sheet_name='Dados_da_Regressao', index=False)
+        erro_df.to_excel(writer, sheet_name='Analise_QME', index=False)
+        
+        workbook = writer.book
+        f_data = workbook.add_format({'num_format': 'dd/mm/yyyy'})
+        if 'Dados_da_Regressao' in writer.sheets:
+            writer.sheets['Dados_da_Regressao'].set_column('A:A', 12, f_data)
+        
+        # Gráfico dinâmico dentro do Excel
+        chart = workbook.add_chart({'type': 'scatter', 'subtype': 'smooth'})
+        chart.add_series({
+            'name': 'QME vs Tb',
+            'categories': ['Analise_QME', 1, 0, len(erro_df), 0],
+            'values': ['Analise_QME', 1, 2, len(erro_df), 2]
+        })
+        chart.set_title({'name': f'Ponto Otimo de Temperatura: {tb_calc}°C'})
+        writer.sheets['Analise_QME'].insert_chart('E2', chart)
+        
     return base64.b64encode(output.getvalue()).decode()
 
 # =========================================================================
-# 🎨 BLOCO 3: INTERFACE PROFISSIONAL
+# 🎨 BLOCO 3: INTERFACE E WORKSPACE
 # =========================================================================
 @app.get("/", response_class=HTMLResponse)
-async def laboratory_portal():
-    html_src = """
+async def lab_main_page():
+    html_template = """
     <!DOCTYPE html>
     <html lang="pt-br">
     <head>
@@ -56,87 +61,105 @@ async def laboratory_portal():
         <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
         <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <style>
+            .sheet-input { width: 100%; border: none; padding: 4px; font-size: 11px; font-family: monospace; text-align: center; background: transparent; }
+            .sheet-input:focus { outline: 2px solid #16a34a; background: #f0fdf4; }
+            .th-lab { background: #f8fafc; font-size: 10px; font-weight: 900; color: #475569; padding: 12px; border: 1px solid #e2e8f0; text-transform: uppercase; }
+        </style>
     </head>
-    <body class="bg-slate-50 font-sans min-h-screen text-slate-800">
-        <div id="loader" class="hidden fixed inset-0 bg-white/95 z-50 flex flex-col items-center justify-center font-black text-green-700 italic">
-            <div class="animate-spin rounded-full h-16 w-16 border-b-2 border-green-600 mb-4"></div>
-            MOTOR CIENTÍFICO EM PROCESSAMENTO...
+    <body class="bg-[#F8FAFC] font-sans min-h-screen text-slate-800">
+        
+        <!-- Loader Sincro -->
+        <div id="loader" class="hidden fixed inset-0 bg-white/95 z-50 flex flex-col items-center justify-center italic font-black text-green-700">
+            <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-green-600 mb-4 shadow-xl"></div>
+            AGRO-MOTOR EM PROCESSAMENTO...
         </div>
 
         <div class="max-w-6xl mx-auto p-4 md:p-10">
-            <div id="login-sec" class="max-w-md mx-auto bg-white p-12 rounded-[3rem] shadow-2xl mt-12 border text-center">
-                <h1 class="text-4xl font-black text-green-700 italic mb-8 italic uppercase tracking-tighter decoration-yellow-400 underline decoration-4">EstimaTB🌿</h1>
-                <input type="email" id="email" placeholder="E-mail Acadêmico" class="w-full border-2 p-4 rounded-3xl mb-4 focus:border-green-600 outline-none bg-slate-50">
-                <input type="password" id="password" placeholder="Senha" class="w-full border-2 p-4 rounded-3xl mb-6 focus:border-green-600 outline-none bg-slate-50">
-                <button onclick="fazerLogin()" class="w-full bg-green-600 text-white py-4 rounded-3xl font-black shadow-xl hover:bg-green-700">ENTRAR NO SISTEMA</button>
-                <button onclick="toggleRegister()" id="sw-btn" class="text-green-600 font-bold text-[9px] uppercase mt-6 block mx-auto">Solicitar Novo Acesso</button>
+            
+            <!-- TELA LOGIN (VISÍVEL POR PADRÃO) -->
+            <div id="login-sec" class="max-w-md mx-auto bg-white p-12 rounded-[3.5rem] shadow-2xl mt-12 border border-slate-200 text-center relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-2 bg-yellow-400 shadow-sm"></div>
+                <h1 class="text-5xl font-black text-green-700 italic mb-2 tracking-tighter uppercase decoration-yellow-400 underline decoration-4 italic">EstimaTB🌿</h1>
+                <p class="text-[9px] font-bold text-slate-300 uppercase tracking-widest mb-12 italic">Academic System v1.1</p>
+                <div class="space-y-4">
+                    <input type="email" id="email" placeholder="E-mail" class="w-full border-2 p-4 rounded-3xl outline-none focus:border-green-600 bg-slate-50 text-sm shadow-inner">
+                    <input type="password" id="password" placeholder="Senha" class="w-full border-2 p-4 rounded-3xl outline-none focus:border-green-600 bg-slate-50 text-sm shadow-inner">
+                    <button onclick="logInLab()" class="w-full bg-green-600 text-white py-5 rounded-[2rem] font-black text-lg shadow-xl hover:bg-green-700 transition tracking-widest">ENTRAR NO SISTEMA</button>
+                    <button onclick="toggleRegister()" id="regBtn" class="text-green-600 font-bold text-[9px] uppercase mt-4 block mx-auto underline italic tracking-tighter">Criar Registro Acadêmico</button>
+                </div>
             </div>
 
-            <div id="main-lab" class="hidden">
-                <div class="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-[2.5rem] border mb-8 px-10 shadow-sm border-slate-200">
-                    <p class="font-bold text-[10px] uppercase text-slate-400 italic italic">Responsável Técnico: <span id="u-display" class="text-green-700 not-italic font-black text-sm"></span></p>
-                    <button onclick="fazerLogout()" class="text-red-500 font-black text-[10px] uppercase border border-red-100 px-6 py-1.5 rounded-full hover:bg-red-50">Sair do Sistema</button>
+            <!-- TELA LABORATORIO (ESCONDIDA POR PADRÃO) -->
+            <div id="lab-workspace" class="hidden">
+                <div class="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-[2.5rem] border border-slate-200 mb-10 px-10 shadow-sm">
+                    <p class="text-slate-400 font-bold text-[10px] uppercase italic tracking-tight italic">Authenticated Specialist: <span id="display-user" class="text-green-700 font-black not-italic text-sm"></span></p>
+                    <button onclick="logOutLab()" class="text-red-500 font-black text-[10px] uppercase border px-4 py-1.5 rounded-full border-red-50 hover:bg-red-50 transition underline tracking-widest">Sair</button>
                 </div>
 
-                <div class="grid lg:grid-cols-12 gap-8">
+                <div class="grid lg:grid-cols-12 gap-10">
                     <div class="lg:col-span-5 space-y-6">
-                        <div class="bg-white p-8 rounded-[3.5rem] shadow-xl border">
-                            <h3 class="font-black text-[10px] uppercase mb-10 border-b pb-4 italic"><i class="fas fa-microscope mr-2 text-green-600"></i>Gestão de Entrada de Dados</h3>
+                        <div class="bg-white p-10 rounded-[3.5rem] shadow-xl border relative">
+                            <h3 class="font-black text-[10px] uppercase mb-10 border-b pb-4 flex items-center italic underline decoration-green-200 underline-offset-8"><i class="fas fa-database mr-3 text-green-600"></i>Painel de Modelagem</h3>
                             
-                            <input type="text" id="input_label" placeholder="Nome da Análise (Opcional)" class="w-full border-2 p-4 rounded-3xl mb-8 font-bold bg-slate-50 outline-none focus:border-green-500 text-sm">
+                            <label class="text-[9px] font-black text-slate-400 mb-1 block uppercase italic ml-2">Identificação do Ensaio</label>
+                            <input type="text" id="id_analise" placeholder="Ex: Milho Safrinha Anita" class="w-full border-2 p-4 rounded-[1.8rem] mb-10 font-bold bg-slate-50 outline-none focus:border-green-500 shadow-inner text-sm">
 
-                            <div class="flex bg-slate-100 p-1.5 rounded-3xl mb-8 border border-slate-200 shadow-inner">
-                                <button onclick="tab('f')" id="b-f" class="flex-1 py-3 text-[10px] font-black rounded-2xl bg-white shadow-md text-green-700 uppercase italic">Anexar Arquivo</button>
-                                <button onclick="tab('m')" id="b-m" class="flex-1 py-3 text-[10px] font-black rounded-2xl text-slate-400 uppercase tracking-tighter">Digitação Direta</button>
+                            <div class="flex bg-slate-100 p-1.5 rounded-[2rem] mb-8 border border-slate-200 shadow-inner">
+                                <button onclick="setTab('f')" id="btn-file" class="flex-1 py-3 text-[10px] font-black rounded-[1.6rem] bg-white shadow-md text-green-700 uppercase italic">Anexar Dataset</button>
+                                <button onclick="setTab('m')" id="btn-manual" class="flex-1 py-3 text-[10px] font-black rounded-[1.6rem] text-slate-400 uppercase tracking-tighter">Inserir na Grade</button>
                             </div>
 
-                            <div id="box-f"><input type="file" id="f_input" class="block w-full border-2 border-dashed p-10 rounded-[2.5rem] bg-slate-50 cursor-pointer text-[10px]"></div>
+                            <div id="u-file" class="mb-10 text-center"><input type="file" id="fInput" class="block w-full border-2 border-dashed p-10 rounded-[3rem] bg-slate-50 cursor-pointer text-xs font-bold text-slate-400 shadow-inner"></div>
 
-                            <div id="box-m" class="hidden">
-                                <p class="text-[9px] font-bold text-slate-400 uppercase mb-4 italic text-center underline decoration-slate-100">Cole seu conteúdo do Excel na grade abaixo</p>
-                                <div class="rounded-3xl border overflow-hidden mb-2 max-h-96 overflow-y-auto bg-gray-50 shadow-inner border-slate-200">
+                            <div id="u-manual" class="hidden mb-10">
+                                <p class="text-[9px] font-black text-slate-400 uppercase mb-4 italic text-center underline decoration-yellow-400">Suporte CTRL+V: Cole 4 Colunas do Excel</p>
+                                <div class="rounded-3xl border border-slate-200 overflow-hidden shadow-inner bg-white mb-2 max-h-96 overflow-y-auto">
                                     <table class="w-full border-collapse">
-                                        <thead class="sticky top-0 z-10 shadow-sm"><tr><th class="p-3 text-[9px] bg-slate-100 border font-black uppercase text-slate-500">Data</th><th class="p-3 text-[9px] bg-slate-100 border font-black uppercase text-slate-500">Tmin</th><th class="p-3 text-[9px] bg-slate-100 border font-black uppercase text-slate-500">Tmax</th><th class="p-3 text-[9px] bg-slate-100 border font-black uppercase text-green-700">NF</th></tr></thead>
-                                        <tbody id="manual-grid"></tbody>
+                                        <thead class="sticky top-0 z-20"><tr><th class="th-lab">Data</th><th class="th-lab">Mín</th><th class="th-lab">Máx</th><th class="th-lab italic font-black text-green-700 uppercase">Variável</th></tr></thead>
+                                        <tbody id="lab-body"></tbody>
                                     </table>
                                 </div>
-                                <div class="flex justify-between px-2 mb-4">
-                                    <button onclick="add(10)" class="text-[9px] font-bold text-green-600 uppercase underline">+ Adicionar Linhas</button>
-                                    <button onclick="limpa()" class="text-[9px] font-bold text-red-400 uppercase italic">Limpar Tudo</button>
+                                <div class="flex justify-between px-4 mt-2">
+                                    <button onclick="addRow(10)" class="text-[9px] font-bold text-green-600 underline uppercase tracking-tighter hover:text-green-700 transition">+ 10 Linhas</button>
+                                    <button onclick="initManualGrid()" class="text-[9px] font-bold text-red-400 uppercase italic tracking-widest">Reset</button>
                                 </div>
                             </div>
 
-                            <div class="bg-slate-50 p-8 rounded-[2.5rem] shadow-inner text-center grid grid-cols-3 gap-3 mb-10 border border-slate-100">
-                                <div class="flex flex-col"><label class="text-[8px] font-black uppercase text-slate-400">Tb Mín</label><input type="number" id="v-min" value="0.0" class="w-full border p-2 rounded-xl text-center font-black"></div>
-                                <div class="flex flex-col"><label class="text-[8px] font-black uppercase text-slate-400">Tb Máx</label><input type="number" id="v-max" value="20.0" class="w-full border p-2 rounded-xl text-center font-black"></div>
-                                <div class="flex flex-col"><label class="text-[8px] font-black uppercase text-green-700">Passo</label><input type="number" id="v-step" value="0.5" step="0.1" class="w-full border-2 border-green-200 bg-white p-2 rounded-xl text-center font-black text-green-700"></div>
+                            <div class="bg-slate-50 p-8 rounded-[2.5rem] shadow-inner text-center grid grid-cols-3 gap-4 mb-10 border border-slate-100">
+                                <div><label class="text-[8px] font-bold uppercase text-slate-400 block mb-2 tracking-tighter italic">Base Mín</label><input type="number" id="vmin" value="0.0" class="w-full border p-2 rounded-xl text-center font-bold text-sm shadow-sm"></div>
+                                <div><label class="text-[8px] font-bold uppercase text-slate-400 block mb-2 tracking-tighter italic">Base Máx</label><input type="number" id="vmax" value="20.0" class="w-full border p-2 rounded-xl text-center font-bold text-sm shadow-sm"></div>
+                                <div><label class="text-[8px] font-black text-green-700 italic block mb-2 uppercase tracking-tighter italic">Ref Passo</label><input type="number" id="vstep" value="0.5" step="0.1" class="w-full border border-green-200 bg-white p-2 rounded-xl text-center font-black text-green-700 text-sm shadow-inner focus:ring-1 focus:ring-green-400"></div>
                             </div>
 
-                            <button onclick="gerarModelagem()" class="w-full bg-green-600 text-white py-6 rounded-[2.5rem] font-black text-xl shadow-xl hover:bg-green-700 transform active:scale-95 transition-all tracking-widest italic uppercase">Executar Modelagem</button>
+                            <button onclick="gerarCalculo()" class="w-full bg-green-600 text-white py-6 rounded-[2.5rem] font-black text-xl shadow-2xl shadow-green-100 hover:bg-green-700 transform active:scale-95 transition-all tracking-widest uppercase italic italic underline decoration-yellow-400 decoration-2">Executar Modelagem</button>
                         </div>
                     </div>
 
-                    <!-- Side Display -->
-                    <div id="side-out" class="lg:col-span-7 hidden animate-in slide-in-from-right duration-500">
-                        <div class="bg-white p-10 rounded-[3.5rem] shadow-2xl border-t-[14px] border-slate-900 sticky top-10 h-fit">
-                            <div class="grid grid-cols-3 gap-6 mb-12 text-center">
-                                <div class="bg-slate-50 p-6 rounded-[2rem] border shadow-inner"><p class="text-[10px] font-bold text-slate-300 uppercase italic">Temp. Basal</p><p id="o-tb" class="text-4xl font-black font-mono">--</p></div>
-                                <div class="bg-green-50/50 p-6 rounded-[2rem] border-2 border-green-100 shadow-inner"><p class="text-[10px] font-black text-green-600 uppercase italic">Precisão R²</p><p id="o-r2" class="text-4xl font-black font-mono text-green-600">--</p></div>
-                                <div class="bg-slate-50 p-6 rounded-[2rem] border shadow-inner"><p class="text-[10px] font-bold text-slate-300 uppercase italic">QME</p><p id="o-qme" class="text-[12px] font-black font-mono tracking-tighter">--</p></div>
+                    <div id="res-side" class="lg:col-span-7 hidden animate-in slide-in-from-right duration-500">
+                        <div class="bg-white p-10 rounded-[3.5rem] shadow-2xl border-t-[14px] border-slate-900 sticky top-10 h-fit border-b">
+                             <div class="grid grid-cols-3 gap-6 mb-12 text-center">
+                                <div class="bg-slate-50 p-6 rounded-[2.2rem] border shadow-inner italic border-slate-200"><p class="text-[9px] font-black text-slate-400 uppercase mb-2">Tb Resultante</p><p id="o-temp" class="text-4xl font-black font-mono tracking-tighter text-slate-800">--</p></div>
+                                <div class="bg-green-50 p-6 rounded-[2.2rem] border-2 border-green-100 shadow-inner"><p class="text-[10px] font-black text-green-600 mb-2 uppercase tracking-widest">Precisão (R²)</p><p id="o-r2" class="text-4xl font-black font-mono text-green-600 tracking-tight">--</p></div>
+                                <div class="bg-slate-50 p-6 rounded-[2.2rem] border shadow-inner border-slate-200"><p class="text-[9px] font-bold text-slate-300 italic uppercase mb-2">Min Erro QME</p><p id="o-qme" class="text-[14px] font-black font-mono text-slate-400">--</p></div>
                              </div>
                              
-                             <div class="space-y-6 mb-10">
-                                <div id="plt1" class="h-64 border rounded-[2rem] p-2 bg-white"></div>
-                                <div id="plt2" class="h-64 border rounded-[2rem] p-2 bg-white"></div>
+                             <div class="space-y-10 mb-10">
+                                <div id="gr1" class="h-64 border rounded-[2.5rem] p-3 bg-white shadow-inner overflow-hidden"></div>
+                                <div id="gr2" class="h-64 border rounded-[2.5rem] p-3 bg-white shadow-inner overflow-hidden"></div>
                              </div>
 
-                             <div class="rounded-[2.5rem] border-2 border-slate-100 mb-8 overflow-hidden">
-                                <p class="bg-slate-50 p-4 text-[9px] font-black uppercase text-slate-400 italic">Monitoramento de Base Processada</p>
-                                <div id="prev-area" class="max-h-56 overflow-auto bg-white"></div>
+                             <div class="rounded-[2rem] border border-slate-200 mb-8 overflow-hidden bg-slate-50">
+                                <h4 class="p-3 text-[10px] font-black uppercase text-slate-500 italic ml-4 flex justify-between mr-6 items-center">
+                                    <span>Dataset Processado e Higienizado</span>
+                                    <i class="fas fa-check-circle text-green-500"></i>
+                                </h4>
+                                <div id="v-prev" class="max-h-56 overflow-auto bg-white border-t border-slate-100 text-[10px] font-mono leading-relaxed"></div>
                              </div>
 
-                             <div id="btn-export" class="p-8 bg-amber-50/50 border-2 border-dashed border-amber-200 rounded-[2.5rem] text-center">
-                                <button onclick="downloadExcel()" class="bg-amber-500 hover:bg-amber-600 text-white font-black px-12 py-5 rounded-full text-md shadow-2xl flex items-center justify-center mx-auto tracking-widest"><i class="fas fa-file-download mr-3 text-2xl"></i>BAIXAR RELATÓRIO EXCEL (.XLSX)</button>
+                             <div id="btn-final-export" class="p-10 bg-amber-50 rounded-[3rem] border border-amber-200 border-dotted text-center shadow-inner hover:bg-amber-100/30 transition-all duration-300">
+                                <p class="text-[10px] font-black uppercase text-amber-700 italic tracking-[0.2em] mb-6 decoration-yellow-400 underline underline-offset-4">Geração de Laudo Agrometeorológico Pro</p>
+                                <button onclick="saveExcel()" class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-black py-6 rounded-full text-lg shadow-xl shadow-yellow-100 flex items-center justify-center transition-all transform active:scale-95 italic uppercase"><i class="fas fa-file-export mr-4 text-2xl"></i>BAIXAR RELATÓRIO (.XLSX)</button>
                              </div>
                         </div>
                     </div>
@@ -145,197 +168,233 @@ async def laboratory_portal():
         </div>
 
         <script>
-            const UR = "EP_URL"; const KY = "EP_KEY"; const ME = "abielgm@icloud.com";
-            const _lab = supabase.createClient(UR, KY);
-            let uiM = 'f'; let xls64 = null;
+            const SV_U = "EP_URL_SET"; const SV_K = "EP_KEY_SET"; const MY_M = "abielgm@icloud.com";
+            const _lab = supabase.createClient(SV_U, SV_K);
+            let uiM = 'f'; let xls64_raw = null;
 
-            function limpa() { document.getElementById('manual-grid').innerHTML = ''; add(15); }
-            function add(n) {
-                const b = document.getElementById('manual-grid');
-                for(let i=0; i<n; i++){
-                    const tr = document.createElement('tr'); tr.className = 'border-b';
-                    tr.innerHTML = '<td><input type="text" class="c-in s-d"></td><td><input type="text" class="c-in s-mi"></td><td><input type="text" class="c-in s-ma"></td><td><input type="text" class="c-in s-v" placeholder="..."></td>';
-                    b.appendChild(tr);
+            // GERENCIAMENTO DA GRADE
+            function initManualGrid() { document.getElementById('lab-body').innerHTML = ''; addRow(20); }
+            function addRow(n) {
+                const b = document.getElementById('lab-body');
+                for(let i=0; i<n; i++) {
+                    const r = document.createElement('tr'); r.className = 'border-b border-slate-100 hover:bg-slate-50 transition';
+                    r.innerHTML = '<td><input type="text" class="sheet-input c-d"></td><td><input type="text" class="sheet-input c-mi"></td><td><input type="text" class="sheet-input c-ma"></td><td><input type="text" class="sheet-input c-v" placeholder="..."></td>';
+                    b.appendChild(r);
                 }
             }
-            add(20);
+            initManualGrid();
 
-            // LOGICA COLAR SEMERU: Separador de Tabulação com Ponto Decimal
+            // SUPORTE AO COPIAR DO EXCEL - Lógica restaurada para precisão 4 colunas
             document.addEventListener('paste', e => {
-                if(e.target.classList.contains('c-in')) {
+                if(e.target.classList.contains('sheet-input')) {
                     e.preventDefault();
-                    const clip = e.clipboardData.getData('text').split(/\\r?\\n/);
-                    let row = e.target.closest('tr');
-                    clip.forEach(t => {
-                        if(!t.trim()) return;
-                        const ds = t.split('\\t'), ins = row.querySelectorAll('input');
-                        for(let i=0; i<Math.min(4, ds.length, ins.length); i++){
-                            ins[i].value = ds[i].trim().replace(',', '.'); // Já limpa a vírgula do excel brasileiro
+                    const clip_t = e.clipboardData.getData('text');
+                    const clip_r = clip_t.split(/\\r?\\n/);
+                    let focusRow = e.target.closest('tr');
+                    
+                    clip_r.forEach(linhaTxt => {
+                        if(linhaTxt.trim() === '') return;
+                        const dCol = linhaTxt.split('\\t'), cellIns = focusRow.querySelectorAll('input');
+                        for(let i=0; i<Math.min(4, dCol.length, cellIns.length); i++){
+                            cellIns[i].value = dCol[i].trim().replace(',', '.'); 
                         }
-                        row = row.nextElementSibling; if(!row){ add(1); row = document.getElementById('manual-grid').lastElementChild; }
+                        focusRow = focusRow.nextElementSibling; if(!focusRow){ addRow(1); focusRow = document.getElementById('lab-body').lastElementChild; }
                     });
                 }
             });
 
-            async function fazerLogin() {
-                const e = document.getElementById('email').value, p = document.getElementById('password').value;
+            async function logInLab() {
+                const em = document.getElementById('email').value, pw = document.getElementById('password').value;
                 document.getElementById('loader').classList.remove('hidden');
-                let {data, error} = await _lab.auth.signInWithPassword({email:e, password:p});
-                if(error){ alert("ERRO DE ACESSO: " + error.message); document.getElementById('loader').classList.add('hidden'); }
-                else location.reload();
+                let {data, error} = await _lab.auth.signInWithPassword({email:em, password:pw});
+                if(error){ 
+                    alert("Acesso Negado: Identificação incorreta no sistema.\\n(" + error.message + ")"); 
+                    document.getElementById('loader').classList.add('hidden'); 
+                } else {
+                    location.reload();
+                }
             }
-            async function logCheck() {
+
+            // RECUPERAÇÃO DE LOGICÁ ESTÁVEL: Session Manager
+            async function sessionControl() {
                 const {data:{user}} = await _lab.auth.getUser();
                 if(user) {
                     document.getElementById('login-sec').classList.add('hidden');
-                    document.getElementById('lab-sec').classList.remove('hidden');
-                    document.getElementById('u-display').innerText = user.email;
+                    document.getElementById('lab-workspace').classList.remove('hidden');
+                    document.getElementById('display-user').innerText = user.email.toLowerCase();
+                } else {
+                    document.getElementById('login-sec').classList.remove('hidden');
+                    document.getElementById('lab-workspace').classList.add('hidden');
                 }
             }
-            logCheck();
-            async function fazerLogout() { await _lab.auth.signOut(); localStorage.clear(); window.location.replace('/'); }
-            function tab(m) { uiM = m; document.getElementById('b-f').classList.toggle('bg-white', m=='f'); document.getElementById('b-m').classList.toggle('bg-white', m=='m'); document.getElementById('box-f').classList.toggle('hidden', m=='m'); document.getElementById('box-m').classList.toggle('hidden', m=='f'); }
+            sessionControl();
 
-            async function gerarModelagem() {
+            async function logOutLab() { 
+                await _lab.auth.signOut(); localStorage.clear(); sessionStorage.clear(); window.location.replace('/'); 
+            }
+            
+            function setTab(m) { 
+                uiM = m; 
+                document.getElementById('btn-file').classList.toggle('bg-white', m=='f'); document.getElementById('btn-manual').classList.toggle('bg-white', m=='m'); 
+                document.getElementById('u-file').classList.toggle('hidden', m=='m'); document.getElementById('u-manual').classList.toggle('hidden', m=='f'); 
+            }
+
+            async function gerarCalculo() {
                 document.getElementById('loader').classList.remove('hidden');
                 const fd = new FormData();
-                fd.append('label', document.getElementById('input_label').value || 'Exp. Agrometeorologia');
-                fd.append('vmin', document.getElementById('v-min').value);
-                fd.append('vmax', document.getElementById('v-max').value);
-                fd.append('vstep', document.getElementById('v-step').value);
+                fd.append('label_agro', document.getElementById('id_analise').value || 'Projeto Experimental EstimaTB');
+                fd.append('vmin_a', document.getElementById('vmin').value);
+                fd.append('vmax_a', document.getElementById('vmax').value);
+                fd.append('vstep_a', document.getElementById('vstep').value);
 
                 if(uiM === 'f') {
-                    const fi = document.getElementById('f_input');
-                    if(!fi.files[0]){ alert("Anexe sua planilha de pesquisa!"); document.getElementById('loader').classList.add('hidden'); return; }
-                    fd.append('file', fi.files[0]);
+                    const fObj = document.getElementById('fInput');
+                    if(!fObj.files[0]){ alert("Erro: Envie o dataset do laboratório."); document.getElementById('loader').classList.add('hidden'); return; }
+                    fd.append('file', fObj.files[0]);
                 } else {
                     let dArr = [];
-                    document.querySelectorAll('#manual-grid tr').forEach(tr => {
-                        // Enviamos com ponto e vírgula para não chocar com a vírgula dos decimais brasileiros no read_csv
-                        const cells = Array.from(tr.querySelectorAll('input')).map(i => i.value.trim().replace(',', '.'));
-                        if(cells[0] && cells[1] && cells[2]) { if(!cells[3]) cells[3] = 'nan'; dArr.push(cells.join(';')); }
+                    document.querySelectorAll('#lab-body tr').forEach(tr => {
+                        const vals = Array.from(tr.querySelectorAll('input')).map(i => i.value.trim().replace(',', '.'));
+                        if(vals[0] && vals[1] && vals[2]) { if(!vals[3]) vals[3] = 'nan'; dArr.push(vals.join(';')); }
                     });
-                    if(dArr.length < 5) { alert("Base manual com dados insuficientes."); document.getElementById('loader').classList.add('hidden'); return; }
-                    fd.append('manual', dArr.join('\\n'));
+                    if(dArr.length < 3) { alert("Base manual insuficiente."); document.getElementById('loader').classList.add('hidden'); return; }
+                    fd.append('manual_dataset', dArr.join('\\n'));
                 }
 
                 try {
-                    const resp = await fetch('/api/lab/process', {method:'POST', body:fd});
+                    const resp = await fetch('/vfinal/lab/calculate', {method:'POST', body:fd});
                     const d = await resp.json();
                     if(d.detail) throw new Error(d.detail);
 
-                    xls64 = d.xls;
-                    document.getElementById('side-out').classList.remove('hidden');
-                    document.getElementById('o-tb').innerText = d.res.temp + "°";
-                    document.getElementById('o-r2').innerText = d.res.r2.toFixed(4);
-                    document.getElementById('o-qme').innerText = d.res.qme.toFixed(9);
-                    document.getElementById('h-lab').innerText = "🔬 Result: " + (d.nome || "Análise Térmica");
+                    xls64_raw = d.xls_file;
+                    document.getElementById('res-side').classList.remove('hidden');
+                    document.getElementById('o-temp').innerText = d.best_v.t + "°";
+                    document.getElementById('o-r2').innerText = d.best_v.r.toFixed(4);
+                    document.getElementById('o-qme').innerText = d.best_v.q.toFixed(9);
 
-                    Plotly.newPlot('plt1', [{x: d.plt.qx, y: d.plt.qy, mode: 'lines+markers', line:{color:'black'}}], {title:'Análise Residual QME', font:{size:10}});
-                    Plotly.newPlot('plt2', [{x: d.plt.rx, y: d.plt.ry, mode:'markers', marker:{color:'gray'}},{x: d.plt.rx, y: d.plt.rp, mode:'lines', line:{color:'black', dash:'dot'}}], {title:'Modelo Experimental: NF vs STa', font:{size:10}, showlegend:false});
+                    // P&B Cientifico
+                    Plotly.newPlot('gr1', [{x: d.plt.qx, y: d.plt.qy, mode: 'lines+markers', line:{color:'black'}, marker:{color:'black'}}], {title:'Analítico QME', font:{size:10}});
+                    Plotly.newPlot('gr2', [{x: d.plt.rx, y: d.plt.ry, mode:'markers', marker:{color:'gray', symbol:'circle-open'}, name:'Obs.'},{x: d.plt.rx, y: d.plt.rp, mode:'lines', line:{color:'black', dash:'dot'}}], {title:'Regressão: NF vs STa', font:{size:10}, showlegend:false});
 
-                    let tbH = '<table class="w-full text-left text-[9px] font-mono"><thead class="bg-slate-50 border-b"><tr><th class="p-2 border-r">Data</th><th class="p-2 border-r">T.Mín</th><th class="p-2 border-r">T.Máx</th><th class="p-2">Var.</th></tr></thead><tbody>';
-                    d.preview.forEach(r => { tbH += `<tr class="border-b"><td class="p-2 border-r">${r.Data}</td><td class="p-2 border-r text-center">${r.Tmin}</td><td class="p-2 border-r text-center">${r.Tmax}</td><td class="p-2 text-center text-green-700 font-bold">${r.NF}</td></tr>`; });
-                    document.getElementById('prev-area').innerHTML = tbH + '</tbody></table>';
+                    let tH = '<table class="w-full text-left font-mono text-[9px] border-collapse"><thead class="bg-slate-50 sticky top-0 z-10 border-b"><tr><th class="p-2 border-r uppercase">Time</th><th class="p-2 border-r text-center">TMin</th><th class="p-2 border-r text-center">TMax</th><th class="p-2 text-center text-green-700 italic">Var (NF)</th></tr></thead><tbody>';
+                    d.preview_tbl.forEach(row_i => { 
+                        tH += `<tr class="border-b"><td class="p-2 border-r uppercase text-slate-500">${row_i.Data}</td><td class="p-2 border-r text-center font-bold">${row_i.Tmin}</td><td class="p-2 border-r text-center font-bold">${row_i.Tmax}</td><td class="p-2 text-center text-green-700 font-bold">${row_i.NF}</td></tr>`; 
+                    });
+                    document.getElementById('v-prev').innerHTML = tH + '</tbody></table>';
 
-                    window.scrollTo({top: 0, behavior:'smooth'});
+                    window.scrollTo({top: document.body.scrollHeight, behavior:'smooth'});
                 } catch(e) {
-                    alert("ALERTA CIENTÍFICO: Falha no Motor Acadêmico.\\n" + e.message);
+                    alert("PROCESS_ERROR: Falha de regressão científica.\\n" + e.message);
                 } finally { document.getElementById('loader').classList.add('hidden'); }
             }
 
-            function downloadExcel() {
-                if(!xls64) return;
-                const bStr = atob(xls64), bArr = new ArrayBuffer(bStr.length), uint = new Uint8Array(bArr);
-                for(let i=0; i<bStr.length; i++) uint[i] = bStr.charCodeAt(i);
-                const b = new Blob([bArr], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-                const link = document.createElement('a'); link.href = window.URL.createObjectURL(b);
-                link.download = `Investigacao_Agro_EstimaTB.xlsx`; link.click();
+            function saveExcel() {
+                if(!xls64_raw) return alert("Planilha não processada.");
+                const bs = atob(xls64_raw), ab = new ArrayBuffer(bs.length), u8 = new Uint8Array(ab);
+                for(let i=0; i<bs.length; i++) u8[i] = bs.charCodeAt(i);
+                const bL = new Blob([ab], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+                const linkObj = document.createElement('a'); linkObj.href = window.URL.createObjectURL(bL);
+                linkObj.download = `EstimaTB_Resultado_Exp.xlsx`; linkObj.click();
             }
         </script>
-        <style>.c-in { width:100%; border:none; padding:6px; font-size:11px; font-family:monospace; text-align:center; }</style>
+        <style>.sheet-input { width: 100%; border:none; outline:none; text-align:center; padding: 6px; font-family:monospace; }</style>
     </body>
     </html>
-    """.replace("EP_URL", SURL).replace("EP_KEY", SKEY)
-    return html_src
+    """.replace("EP_URL_SET", SURL).replace("EP_KEY_SET", SKEY)
+    return html_template
 
 # =========================================================================
-# ⚙️ BLOCO 4: ENGINE - PROCESSAMENTO SEGURO
+# ⚙️ BLOCO 4: BACKEND FINAL ENGINE (PROTEGIDO CONTRA ERROS DE TIPO)
 # =========================================================================
-@app.post("/api/lab/process")
-async def run_agro_engine(
-    file: UploadFile = None, manual: str = Form(None), label: str = Form(""),
-    vmin: float = Form(0.0), vmax: float = Form(20.0), vstep: float = Form(0.5)
+@app.post("/vfinal/lab/calculate")
+async def laboratory_calculation(
+    file: UploadFile = None, manual_dataset: str = Form(None), label_agro: str = Form(""),
+    vmin_a: float = Form(0.0), vmax_a: float = Form(20.0), vstep_a: float = Form(0.5)
 ):
     try:
+        # Load Dataset
         if file:
-            content = await file.read()
-            df = pd.read_csv(BytesIO(content), sep=None, engine='python', decimal=',') if file.filename.endswith('.csv') else pd.read_excel(BytesIO(content))
+            c = await file.read()
+            df = pd.read_csv(BytesIO(c), sep=None, engine='python', decimal=',') if file.filename.endswith('.csv') else pd.read_excel(BytesIO(c))
         else:
-            # Semicolon separator strictly used to prevent decimal comma confusion
-            df = pd.read_csv(StringIO(manual), sep=';', names=['Data','Tmin','Tmax','NF'], header=None)
+            # Separador ponto-e-virgula protege contra decimais br (vírgula)
+            df = pd.read_csv(StringIO(manual_dataset), sep=';', names=['Data','Tmin','Tmax','NF'], header=None)
 
-        # Standardizing ColNames
-        for col in df.columns:
-            nc = fix_scientific_txt(col)
-            if nc == 'data': df.rename(columns={col: 'Data'}, inplace=True)
-            elif nc in ['tmin','tminima']: df.rename(columns={col: 'Tmin'}, inplace=True)
-            elif nc in ['tmax','tmaxima']: df.rename(columns={col: 'Tmax'}, inplace=True)
-            elif nc in ['nf','variavel','variável']: df.rename(columns={col: 'NF'}, inplace=True)
+        # Standard Normalization (Renomeia Data, Tmin, Tmax, NF)
+        def clean_sc_cols(x):
+            nx = "".join(c for c in unicodedata.normalize('NFKD', str(x)) if not unicodedata.combining(c)).lower().strip()
+            if nx == 'data': return 'Data'
+            if nx in ['tmin','tminima','tmín']: return 'Tmin'
+            if nx in ['tmax','tmaxima','tmáx']: return 'Tmax'
+            if nx in ['nf','variavel','variável']: return 'NF'
+            return x
+        df.rename(columns=clean_sc_cols, inplace=True)
 
-        # Numerical Clean (Force point decimals and filter noise)
-        for c in ['Tmin','Tmax','NF']:
-            df[c] = pd.to_numeric(df[c].astype(str).str.replace(',','.').str.replace('[^0-9\.\-]', '', regex=True), errors='coerce')
+        for col_name in ['Tmin','Tmax','NF']:
+            if col_name in df.columns:
+                df[col_name] = pd.to_numeric(df[col_name].astype(str).str.replace(',', '.').str.replace('[^0-9\\.\\-]', '', regex=True), errors='coerce')
         
-        # Adaptive Date Conversion
         df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['Data','Tmin','Tmax']).sort_values('Data').reset_index(drop=True)
 
-        # Pheno Selection
-        pheno_rows = df.dropna(subset=['NF'])
-        if len(pheno_rows) < 3:
-            raise ValueError(f"Foram encontradas apenas {len(pheno_rows)} medições da Variável. O motor exige pelo menos 3 avaliações fenomenológicas para correlação.")
+        points_pheno = df.dropna(subset=['NF'])
+        if len(points_pheno) < 3:
+            raise ValueError(f"Foram encontradas apenas {len(points_pheno)} observações fenomenológicas. O sistema acadêmico exige o mínimo de 3 dias de campo para realizar a modelagem linear.")
 
-        # Logic engine
+        # Logic Matrix
         df['Tmed'] = (df['Tmin'] + df['Tmax']) / 2
-        p_idx = pheno_rows.index
-        scan = []
-        winner = None
-        min_qme_val = float('inf')
+        p_idx = points_pheno.index
+        results_track = []
+        winner_data = {}
+        abs_min_qme = float('inf')
 
-        t_steps = np.arange(vmin, vmax + vstep, vstep)
-        for ti in t_steps:
-            ti = round(float(ti), 2)
-            sta_acum = (df['Tmed'] - ti).clip(lower=0).cumsum()
+        scan_t_range = np.arange(vmin_a, vmax_a + vstep_a, vstep_a)
+        for tb_i in scan_t_range:
+            tb_i = round(float(tb_i), 2)
+            sta_acumulado = (df['Tmed'] - tb_i).clip(lower=0).cumsum()
             
-            X_fit = sta_acum.loc[p_idx].values.reshape(-1, 1)
-            y_fit = df.loc[p_idx, 'NF'].values
+            # Sincronia de Amostragem (Garante Array Matching)
+            X_model = sta_acumulado.loc[p_idx].values.reshape(-1, 1)
+            y_model = df.loc[p_idx, 'NF'].values
             
-            lr = LinearRegression().fit(X_fit, y_fit)
-            r2_val, qme_val = lr.score(X_fit, y_fit), mean_squared_error(y_fit, lr.predict(X_fit))
-            scan.append({'Tb': ti, 'R2': r2_val, 'QME': qme_val})
+            reg_f = LinearRegression().fit(X_model, y_model)
+            qme_s = mean_squared_error(y_model, reg_f.predict(X_model))
+            r2_s = reg_f.score(X_model, y_model)
+            results_track.append({'Tb': tb_i, 'R2': r2_s, 'QME': qme_s})
             
-            if qme_val < min_qme_val:
-                min_qme_val = qme_val
-                winner = {
-                    't': ti, 'r2': r2_val, 'qme': qme_val, 'a': lr.coef_[0], 'b': lr.intercept_,
-                    'x_plt': sta_acum.loc[p_idx].tolist(), 'all_sta': sta_acum.tolist()
+            if qme_s < abs_min_qme:
+                abs_min_qme = qme_s
+                winner_data = {
+                    't': tb_i, 'r2': r2_s, 'qme': qme_s, 'a': reg_f.coef_[0], 'b': reg_f.intercept_,
+                    'plt_x': sta_acumulado.loc[p_idx].tolist(),
+                    'full_sta': sta_acumulado.tolist()
                 }
 
-        metrics_df = pd.DataFrame(scan)
+        log_err_df = pd.DataFrame(results_track)
         
-        # Construct Excel Datasets
-        clima_data = df[['Data','Tmin','Tmax','Tmed']].copy()
-        clima_data['STa_Optimized'] = winner['all_sta']
-        pheno_data = pd.DataFrame({'Data': df.loc[p_idx, 'Data'], 'Variante_Observada': df.loc[p_idx, 'NF'], 'STa_Acumulado': winner['x_plt']})
+        # Datasets para Excel (Otimizado)
+        final_clima = df[['Data','Tmin','Tmax','Tmed']].copy()
+        final_clima['STa_Optimized'] = winner_data['full_sta']
+        
+        final_reg = pd.DataFrame({
+            'Data': df.loc[p_idx, 'Data'],
+            'Medicao_Variavel_NF': df.loc[p_idx, 'NF'],
+            'STa_Acumulado_Ideal': winner_data['plt_x']
+        })
 
-        # Xls export
-        b64 = export_xlsx(clima_data, metrics_df, pheno_data, winner['t'])
+        xlsx_64 = gerar_pacote_excel(final_clima, log_err_df, final_reg, winner_data['t'])
 
         return {
-            "nome": label, "res": {"temp": winner['t'], "r2": winner['r2'], "qme": winner['qme']},
-            "plt": {"qx": metrics_df['Tb'].tolist(), "qy": metrics_df['QME'].tolist(), "rx": winner['x_plt'], "ry": pheno_rows['NF'].astype(float).tolist(), "rp": [float(val * winner['a'] + winner['b']) for val in winner['x_plt']]},
-            "preview": df.head(15).astype(str).to_dict(orient="records"), "xls": b64
+            "label_i": label_agro or "Project Data Analysis",
+            "best_v": {"t": float(winner_data['t']), "r": float(winner_data['r2']), "q": float(winner_data['qme'])},
+            "plt": {
+                "qx": log_err_df['Tb'].tolist(), "qy": log_err_df['QME'].tolist(),
+                "rx": [float(v) for v in winner_data['plt_x']], 
+                "ry": points_pheno['NF'].astype(float).tolist(),
+                "rp": [float(x_i * winner_data['a'] + winner_data['b']) for x_i in winner_data['plt_x']]
+            },
+            "preview_tbl": df.head(50).astype(str).to_dict(orient="records"),
+            "xls_file": xlsx_64
         }
     except Exception as e:
         import traceback
