@@ -4,7 +4,8 @@ import pandas as pd
 import numpy as np
 import unicodedata
 import base64
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from typing import Optional # <--- A CHAVE PARA RESOLVER O ERRO DE PADRÃO
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 from io import BytesIO, StringIO
 from sklearn.linear_model import LinearRegression
@@ -43,7 +44,7 @@ def limpar_texto(t):
     return "".join(c for c in unicodedata.normalize('NFKD', t) if not unicodedata.combining(c)).lower().strip()
 
 # =========================================================================
-# 🎨 BLOCO 3: INTERFACE DO SITE (FRONTEND COMPLETO E CORRIGIDO)
+# 🎨 BLOCO 3: INTERFACE DO SITE
 # =========================================================================
 @app.get("/", response_class=HTMLResponse)
 async def carregar_site():
@@ -152,10 +153,9 @@ async def carregar_site():
         </div>
 
         <script>
-            // JS 100% Sincronizado com os IDs acima
             const U_EP = "SU_R"; const K_EP = "SK_Y"; 
             const _sb = supabase.createClient(U_EP, K_EP);
-            let activeTab = 'f'; let xlsData = null; let logMode = 'login';
+            let activeTab = 'f'; let xlsData = null;
 
             function limparTabela() { document.getElementById('grid-body').innerHTML = ''; addLinha(15); }
             function addLinha(n) {
@@ -201,12 +201,8 @@ async def carregar_site():
                 }
             }
             verificarSessao();
-            
             async function fazerLogout() { await _sb.auth.signOut(); localStorage.clear(); window.location.replace('/'); }
-            
-            function mudarModoLogin() {
-                alert("Módulo de registro ainda em desenvolvimento.");
-            }
+            function mudarModoLogin() { alert("Módulo de registro em desenvolvimento."); }
 
             function alternarAba(m) { 
                 activeTab = m; 
@@ -237,7 +233,7 @@ async def carregar_site():
                             linhas.push(vals.join('|'));
                         }
                     });
-                    if(linhas.length < 3) { alert("Faltam dados na planilha. Preencha pelo menos 3 linhas completas."); document.getElementById('loader').classList.add('hidden'); return; }
+                    if(linhas.length < 3) { alert("Faltam dados na tabela. Preencha pelo menos 3 linhas."); document.getElementById('loader').classList.add('hidden'); return; }
                     fd.append('manual_data', linhas.join('\\n'));
                 }
 
@@ -245,10 +241,11 @@ async def carregar_site():
                     const resp = await fetch('/api/motor/run', {method:'POST', body:fd});
                     const d = await resp.json();
                     
+                    // Tratamento seguro de erros vindo do FastAPI
                     if(!resp.ok || d.detail) {
-                        let errorMsg = d.detail;
+                        let errorMsg = typeof d.detail === 'string' ? d.detail : "Falha na validação dos dados.";
                         if(Array.isArray(d.detail)) {
-                            errorMsg = d.detail.map(e => `${e.loc.join('->')}: ${e.msg}`).join('\\n');
+                            errorMsg = d.detail.map(e => `${e.loc ? e.loc.join('->') : 'Campo'}: ${e.msg}`).join('\\n');
                         }
                         throw new Error(errorMsg);
                     }
@@ -277,11 +274,15 @@ async def carregar_site():
 
             function baixarXLSX() {
                 if(!xlsData) return;
-                const bs = atob(xlsData), ab = new ArrayBuffer(bs.length), u8 = new Uint8Array(ab);
-                for(let i=0; i<bs.length; i++) u8[i] = bs.charCodeAt(i);
-                const b = new Blob([ab], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-                const link = document.createElement('a'); link.href = window.URL.createObjectURL(b);
-                link.download = `EstimaTB_Resultado_${new Date().getTime()}.xlsx`; link.click();
+                try {
+                    const bs = atob(xlsData), ab = new ArrayBuffer(bs.length), u8 = new Uint8Array(ab);
+                    for(let i=0; i<bs.length; i++) u8[i] = bs.charCodeAt(i);
+                    const b = new Blob([ab], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+                    const link = document.createElement('a'); link.href = window.URL.createObjectURL(b);
+                    link.download = `EstimaTB_Resultado_${new Date().getTime()}.xlsx`; link.click();
+                } catch(err) {
+                    alert("Erro ao processar o arquivo Excel.");
+                }
             }
         </script>
     </body>
@@ -294,9 +295,10 @@ async def carregar_site():
 # =========================================================================
 @app.post("/api/motor/run")
 async def run_engine_backend(
-    file: UploadFile = File(None), 
-    manual_data: str = Form(None), 
-    label: str = Form(""),
+    # AQUI ESTÁ A CORREÇÃO: Usando Optional para o FastAPI entender que os campos podem vir vazios
+    file: Optional[UploadFile] = File(None), 
+    manual_data: Optional[str] = Form(None), 
+    label: Optional[str] = Form(""),
     vmin: float = Form(0.0), 
     vmax: float = Form(20.0), 
     vstep: float = Form(0.5)
@@ -310,37 +312,36 @@ async def run_engine_backend(
             else:
                 df = pd.read_excel(BytesIO(content))
         elif manual_data:
-            # Separador PIPE (|) para blindar contra vírgulas soltas
             df = pd.read_csv(StringIO(manual_data), sep='|', names=['Data','Tmin','Tmax','NF'], header=None)
         else:
             raise ValueError("Nenhum dado fornecido. Envie um arquivo ou preencha a tabela manual.")
 
-        # HIGIENIZAÇÃO DE COLUNAS (Evita erro de cabeçalho duplo)
+        # HIGIENIZAÇÃO DE COLUNAS
         df.rename(columns=lambda x: 'Data' if limpar_texto(x) == 'data' else x, inplace=True)
         df.rename(columns=lambda x: 'Tmin' if limpar_texto(x) in ['tmin','tminima','tmín'] else x, inplace=True)
         df.rename(columns=lambda x: 'Tmax' if limpar_texto(x) in ['tmax','tmaxima','tmáx'] else x, inplace=True)
         df.rename(columns=lambda x: 'NF' if limpar_texto(x) in ['nf','variavel','variável'] else x, inplace=True)
 
-        # TRATAMENTO NUMÉRICO AGRESSIVO
+        # TRATAMENTO NUMÉRICO AGRESSIVO E SEGURO
         for col in ['Tmin','Tmax','NF']:
             if col in df.columns:
                 df[col] = pd.to_numeric(
-                    df[col].astype(str).str.replace(',', '.').str.replace(r'[^0-9\.\-]', '', regex=True), 
+                    df[col].astype(str).str.replace(',', '.').str.replace(r'[^\d\.\-]', '', regex=True), 
                     errors='coerce'
                 )
         
         # TRATAMENTO DE DATAS
         df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
         
-        # Exclui linhas onde a conversão falhou
+        # Exclui linhas inválidas
         df = df.dropna(subset=['Data','Tmin','Tmax']).sort_values('Data').reset_index(drop=True)
 
         # FILTRO FENOLÓGICO
         v_pheno = df.dropna(subset=['NF'])
         if len(v_pheno) < 3:
-            raise ValueError(f"Foram identificados apenas {len(v_pheno)} registros de NF (Variável). O cálculo exige no mínimo 3 pontos para criar a reta de regressão.")
+            raise ValueError(f"Foram identificados apenas {len(v_pheno)} registros válidos de NF. O modelo exige no mínimo 3 pontos.")
 
-        # INICIO DO CÁLCULO
+        # INICIO DO CÁLCULO MATEMÁTICO
         df['Tmed'] = (df['Tmin'] + df['Tmax']) / 2
         p_idx = v_pheno.index
         scan_res = []
@@ -352,19 +353,18 @@ async def run_engine_backend(
             t = round(float(t), 2)
             sta_cum = (df['Tmed'] - t).clip(lower=0).cumsum()
             
-            # Recorte apenas nos dias de medição
             X = sta_cum.loc[p_idx].values.reshape(-1, 1)
             y = df.loc[p_idx, 'NF'].values
             
             lr = LinearRegression().fit(X, y)
-            err = mean_squared_error(y, lr.predict(X))
-            r2 = lr.score(X, y)
+            err = float(mean_squared_error(y, lr.predict(X))) # Casting seguro para float
+            r2 = float(lr.score(X, y))
             
             scan_res.append({'Tb': t, 'R2': r2, 'QME': err})
             
             if err < min_err:
                 min_err = err
-                winner = {'tb': t, 'r2': r2, 'qme': err, 'a': lr.coef_[0], 'b': lr.intercept_, 'px': sta_cum.loc[p_idx].tolist(), 'fs': sta_cum.tolist()}
+                winner = {'tb': t, 'r2': r2, 'qme': err, 'a': float(lr.coef_[0]), 'b': float(lr.intercept_), 'px': sta_cum.loc[p_idx].tolist(), 'fs': sta_cum.tolist()}
 
         mdf = pd.DataFrame(scan_res)
         
@@ -375,6 +375,10 @@ async def run_engine_backend(
 
         xlsx_64 = gerar_relatorio_excel(c_exp, mdf, p_exp, winner['tb'])
 
+        # PREVIEW BLINDADO (Substitui possíveis NaNs por vazio para não quebrar o JSON)
+        df_preview = df.head(30).copy()
+        df_preview = df_preview.fillna("")
+
         return {
             "nome": label or "Amostra Científica",
             "res": {"tb": winner['tb'], "r2": winner['r2'], "qme": winner['qme']},
@@ -383,7 +387,7 @@ async def run_engine_backend(
                 "rx": [float(x) for x in winner['px']], "ry": v_pheno['NF'].astype(float).tolist(),
                 "rp": [float(x * winner['a'] + winner['b']) for x in winner['px']]
             },
-            "preview": df.head(30).astype(str).to_dict(orient="records"),
+            "preview": df_preview.astype(str).to_dict(orient="records"),
             "xls": xlsx_64
         }
     except Exception as e:
