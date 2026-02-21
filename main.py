@@ -13,7 +13,7 @@ from sklearn.metrics import mean_squared_error
 app = FastAPI()
 
 # =========================================================================
-# 🔒 BLOCO 1: LOGIN (BLINDADO)
+# 🔒 BLOCO 1: LOGIN E CONFIGURAÇÕES
 # =========================================================================
 SURL = "https://iuhtopexunirguxmjiey.supabase.co"
 SKEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1aHRvcGV4dW5pcmd1eG1qaWV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MjIzNTcsImV4cCI6MjA4NzA5ODM1N30.EjDui9gQ5AlRaNpoVQisGUoXmK3j74gwzq9QSguxq78"
@@ -21,7 +21,7 @@ stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 ADM_MAIL = "abielgm@icloud.com"
 
 # =========================================================================
-# 🧬 BLOCO 2: EXPORTAÇÃO EXCEL
+# 🧬 BLOCO 2: EXPORTAÇÃO EXCEL E UTILITÁRIOS
 # =========================================================================
 def gerar_relatorio_excel(clima, erros, reg, tb):
     out = BytesIO()
@@ -43,7 +43,7 @@ def limpar_texto(t):
     return "".join(c for c in unicodedata.normalize('NFKD', t) if not unicodedata.combining(c)).lower().strip()
 
 # =========================================================================
-# 🎨 BLOCO 3: INTERFACE DO SITE (CORRIGIDA)
+# 🎨 BLOCO 3: INTERFACE DO SITE (FRONTEND COMPLETO E CORRIGIDO)
 # =========================================================================
 @app.get("/", response_class=HTMLResponse)
 async def carregar_site():
@@ -70,7 +70,6 @@ async def carregar_site():
         </div>
 
         <div class="max-w-6xl mx-auto p-4 md:p-10">
-            <!-- LOGIN -->
             <div id="login-sec" class="max-w-md mx-auto bg-white p-12 rounded-[3rem] shadow-2xl mt-12 border text-center relative overflow-hidden">
                 <div class="absolute top-0 left-0 w-full h-2 bg-yellow-400"></div>
                 <h1 class="text-4xl font-black text-green-700 italic mb-2 uppercase underline decoration-yellow-400 decoration-4">EstimaTB🌿</h1>
@@ -83,7 +82,6 @@ async def carregar_site():
                 </div>
             </div>
 
-            <!-- WORKSPACE -->
             <div id="lab-sec" class="hidden animate-in fade-in duration-500">
                 <div class="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-[2.5rem] border border-slate-200 mb-8 px-10 shadow-sm">
                     <p class="font-bold text-[10px] uppercase text-slate-400 italic">Logado como: <span id="u-display" class="text-green-700 not-italic font-black text-sm ml-1 uppercase"></span></p>
@@ -91,7 +89,6 @@ async def carregar_site():
                 </div>
 
                 <div class="grid lg:grid-cols-12 gap-8">
-                    <!-- Configurações -->
                     <div class="lg:col-span-5 space-y-6">
                         <div class="bg-white p-10 rounded-[3.5rem] shadow-xl border relative">
                             <h3 class="font-black text-[11px] uppercase mb-8 border-b pb-4 flex items-center italic text-slate-600"><i class="fas fa-database mr-2 text-green-600"></i>Painel de Entrada</h3>
@@ -126,7 +123,6 @@ async def carregar_site():
                         </div>
                     </div>
 
-                    <!-- Resultados -->
                     <div id="res-sec" class="lg:col-span-7 hidden animate-in slide-in-from-right duration-500">
                         <div class="bg-white p-10 rounded-[3.5rem] shadow-2xl border-t-[14px] border-slate-900 sticky top-10">
                             <h2 class="text-xl font-black italic border-b pb-6 mb-10 text-slate-800" id="res-title">Resultado da Modelagem</h2>
@@ -175,11 +171,11 @@ async def carregar_site():
             document.addEventListener('paste', e => {
                 if(e.target.classList.contains('c-input')) {
                     e.preventDefault();
-                    const clip = e.clipboardData.getData('text').split(/\r?\n/);
+                    const clip = e.clipboardData.getData('text').split(/\\r?\\n/);
                     let tr = e.target.closest('tr');
                     clip.forEach(linha => {
                         if(linha.trim() === '') return;
-                        const data = linha.split('\t'), inps = tr.querySelectorAll('input');
+                        const data = linha.split('\\t'), inps = tr.querySelectorAll('input');
                         for(let i=0; i<Math.min(4, data.length, inps.length); i++){
                             inps[i].value = data[i].trim().replace(',', '.');
                         }
@@ -205,8 +201,13 @@ async def carregar_site():
                 }
             }
             verificarSessao();
+            
             async function fazerLogout() { await _sb.auth.signOut(); localStorage.clear(); window.location.replace('/'); }
             
+            function mudarModoLogin() {
+                alert("Módulo de registro ainda em desenvolvimento.");
+            }
+
             function alternarAba(m) { 
                 activeTab = m; 
                 document.getElementById('btn-f').classList.toggle('bg-white', m=='f'); 
@@ -215,7 +216,6 @@ async def carregar_site():
                 document.getElementById('box-m').classList.toggle('hidden', m=='f'); 
             }
 
-            // FUNÇÃO RESTAURADA E CORRIGIDA
             async function rodarMotor() {
                 document.getElementById('loader').classList.remove('hidden');
                 const fd = new FormData();
@@ -238,18 +238,17 @@ async def carregar_site():
                         }
                     });
                     if(linhas.length < 3) { alert("Faltam dados na planilha. Preencha pelo menos 3 linhas completas."); document.getElementById('loader').classList.add('hidden'); return; }
-                    fd.append('manual_data', linhas.join('\n'));
+                    fd.append('manual_data', linhas.join('\\n'));
                 }
 
                 try {
                     const resp = await fetch('/api/motor/run', {method:'POST', body:fd});
                     const d = await resp.json();
                     
-                    // CORREÇÃO 3: Parser inteligente de erros do FastAPI aplicado no local correto
                     if(!resp.ok || d.detail) {
                         let errorMsg = d.detail;
                         if(Array.isArray(d.detail)) {
-                            errorMsg = d.detail.map(e => `${e.loc.join('->')}: ${e.msg}`).join('\n');
+                            errorMsg = d.detail.map(e => `${e.loc.join('->')}: ${e.msg}`).join('\\n');
                         }
                         throw new Error(errorMsg);
                     }
@@ -272,7 +271,7 @@ async def carregar_site():
 
                     window.scrollTo({top: document.body.scrollHeight, behavior:'smooth'});
                 } catch(e) {
-                    alert("ALERTA CIENTÍFICO:\n" + e.message);
+                    alert("ALERTA CIENTÍFICO:\\n" + e.message);
                 } finally { document.getElementById('loader').classList.add('hidden'); }
             }
 
@@ -284,7 +283,7 @@ async def carregar_site():
                 const link = document.createElement('a'); link.href = window.URL.createObjectURL(b);
                 link.download = `EstimaTB_Resultado_${new Date().getTime()}.xlsx`; link.click();
             }
-            </script>
+        </script>
     </body>
     </html>
     """.replace("SU_R", SURL).replace("SK_Y", SKEY)
@@ -295,7 +294,6 @@ async def carregar_site():
 # =========================================================================
 @app.post("/api/motor/run")
 async def run_engine_backend(
-    # CORREÇÃO 1: Uso obrigatório do File(None) para arquivos opcionais
     file: UploadFile = File(None), 
     manual_data: str = Form(None), 
     label: str = Form(""),
@@ -326,7 +324,6 @@ async def run_engine_backend(
         # TRATAMENTO NUMÉRICO AGRESSIVO
         for col in ['Tmin','Tmax','NF']:
             if col in df.columns:
-                # CORREÇÃO 2: Adicionado o prefixo 'r' para Raw String no Regex
                 df[col] = pd.to_numeric(
                     df[col].astype(str).str.replace(',', '.').str.replace(r'[^0-9\.\-]', '', regex=True), 
                     errors='coerce'
@@ -391,5 +388,5 @@ async def run_engine_backend(
         }
     except Exception as e:
         import traceback
-        print(traceback.format_exc()) # Mantém o log no console do servidor para você debugar depois
+        print(traceback.format_exc()) 
         return {"detail": str(e)}
