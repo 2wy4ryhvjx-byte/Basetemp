@@ -175,11 +175,11 @@ async def carregar_site():
             document.addEventListener('paste', e => {
                 if(e.target.classList.contains('c-input')) {
                     e.preventDefault();
-                    const clip = e.clipboardData.getData('text').split(/\\r?\\n/);
+                    const clip = e.clipboardData.getData('text').split(/\r?\n/);
                     let tr = e.target.closest('tr');
                     clip.forEach(linha => {
                         if(linha.trim() === '') return;
-                        const data = linha.split('\\t'), inps = tr.querySelectorAll('input');
+                        const data = linha.split('\t'), inps = tr.querySelectorAll('input');
                         for(let i=0; i<Math.min(4, data.length, inps.length); i++){
                             inps[i].value = data[i].trim().replace(',', '.');
                         }
@@ -215,22 +215,14 @@ async def carregar_site():
                 document.getElementById('box-m').classList.toggle('hidden', m=='f'); 
             }
 
-            try {
-                    const resp = await fetch('/api/motor/run', {method:'POST', body:fd});
-                    const d = await resp.json();
-                    
-                    // CORREÇÃO 3: Parser inteligente de erros do FastAPI
-                    if(!resp.ok || d.detail) {
-                        let errorMsg = d.detail;
-                        if(Array.isArray(d.detail)) {
-                            // Se for erro de validação do Pydantic, formata para texto legível
-                            errorMsg = d.detail.map(e => `${e.loc.join('->')}: ${e.msg}`).join('\n');
-                        }
-                        throw new Error(errorMsg);
-                    }
-
-                    xlsData = d.xls;
-                    document.getElementById('res-sec').classList.remove('hidden');
+            // FUNÇÃO RESTAURADA E CORRIGIDA
+            async function rodarMotor() {
+                document.getElementById('loader').classList.remove('hidden');
+                const fd = new FormData();
+                fd.append('label', document.getElementById('a_label').value || 'Análise EstimaTB');
+                fd.append('vmin', document.getElementById('v_min').value);
+                fd.append('vmax', document.getElementById('v_max').value);
+                fd.append('vstep', document.getElementById('v_step').value);
 
                 if(activeTab === 'f') {
                     const f_obj = document.getElementById('f_input');
@@ -246,13 +238,21 @@ async def carregar_site():
                         }
                     });
                     if(linhas.length < 3) { alert("Faltam dados na planilha. Preencha pelo menos 3 linhas completas."); document.getElementById('loader').classList.add('hidden'); return; }
-                    fd.append('manual_data', linhas.join('\\n'));
+                    fd.append('manual_data', linhas.join('\n'));
                 }
 
                 try {
                     const resp = await fetch('/api/motor/run', {method:'POST', body:fd});
                     const d = await resp.json();
-                    if(d.detail) throw new Error(d.detail);
+                    
+                    // CORREÇÃO 3: Parser inteligente de erros do FastAPI aplicado no local correto
+                    if(!resp.ok || d.detail) {
+                        let errorMsg = d.detail;
+                        if(Array.isArray(d.detail)) {
+                            errorMsg = d.detail.map(e => `${e.loc.join('->')}: ${e.msg}`).join('\n');
+                        }
+                        throw new Error(errorMsg);
+                    }
 
                     xlsData = d.xls;
                     document.getElementById('res-sec').classList.remove('hidden');
@@ -272,7 +272,7 @@ async def carregar_site():
 
                     window.scrollTo({top: document.body.scrollHeight, behavior:'smooth'});
                 } catch(e) {
-                    alert("ALERTA CIENTÍFICO:\\n" + e.message);
+                    alert("ALERTA CIENTÍFICO:\n" + e.message);
                 } finally { document.getElementById('loader').classList.add('hidden'); }
             }
 
@@ -284,7 +284,7 @@ async def carregar_site():
                 const link = document.createElement('a'); link.href = window.URL.createObjectURL(b);
                 link.download = `EstimaTB_Resultado_${new Date().getTime()}.xlsx`; link.click();
             }
-        </script>
+            </script>
     </body>
     </html>
     """.replace("SU_R", SURL).replace("SK_Y", SKEY)
