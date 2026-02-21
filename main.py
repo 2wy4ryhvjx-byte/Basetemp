@@ -215,13 +215,22 @@ async def carregar_site():
                 document.getElementById('box-m').classList.toggle('hidden', m=='f'); 
             }
 
-            async function rodarMotor() {
-                document.getElementById('loader').classList.remove('hidden');
-                const fd = new FormData();
-                fd.append('label', document.getElementById('a_label').value || 'Análise EstimaTB');
-                fd.append('vmin', document.getElementById('v_min').value);
-                fd.append('vmax', document.getElementById('v_max').value);
-                fd.append('vstep', document.getElementById('v_step').value);
+            try {
+                    const resp = await fetch('/api/motor/run', {method:'POST', body:fd});
+                    const d = await resp.json();
+                    
+                    // CORREÇÃO 3: Parser inteligente de erros do FastAPI
+                    if(!resp.ok || d.detail) {
+                        let errorMsg = d.detail;
+                        if(Array.isArray(d.detail)) {
+                            // Se for erro de validação do Pydantic, formata para texto legível
+                            errorMsg = d.detail.map(e => `${e.loc.join('->')}: ${e.msg}`).join('\n');
+                        }
+                        throw new Error(errorMsg);
+                    }
+
+                    xlsData = d.xls;
+                    document.getElementById('res-sec').classList.remove('hidden');
 
                 if(activeTab === 'f') {
                     const f_obj = document.getElementById('f_input');
@@ -282,21 +291,31 @@ async def carregar_site():
     return html_code
 
 # =========================================================================
-# ⚙️ BLOCO 4: MOTOR CIENTÍFICO (ROBUSTO CONTRA DADOS SUJOS)
+# ⚙️ BLOCO 4: MOTOR CIENTÍFICO (ROBUSTO E OTIMIZADO)
 # =========================================================================
 @app.post("/api/motor/run")
 async def run_engine_backend(
-    file: UploadFile = None, manual_data: str = Form(None), label: str = Form(""),
-    vmin: float = Form(0.0), vmax: float = Form(20.0), vstep: float = Form(0.5)
+    # CORREÇÃO 1: Uso obrigatório do File(None) para arquivos opcionais
+    file: UploadFile = File(None), 
+    manual_data: str = Form(None), 
+    label: str = Form(""),
+    vmin: float = Form(0.0), 
+    vmax: float = Form(20.0), 
+    vstep: float = Form(0.5)
 ):
     try:
         # IMPORTAÇÃO DOS DADOS
-        if file:
+        if file and file.filename:
             content = await file.read()
-            df = pd.read_csv(BytesIO(content), sep=None, engine='python', decimal=',') if file.filename.endswith('.csv') else pd.read_excel(BytesIO(content))
-        else:
+            if file.filename.endswith('.csv'):
+                df = pd.read_csv(BytesIO(content), sep=None, engine='python', decimal=',')
+            else:
+                df = pd.read_excel(BytesIO(content))
+        elif manual_data:
             # Separador PIPE (|) para blindar contra vírgulas soltas
             df = pd.read_csv(StringIO(manual_data), sep='|', names=['Data','Tmin','Tmax','NF'], header=None)
+        else:
+            raise ValueError("Nenhum dado fornecido. Envie um arquivo ou preencha a tabela manual.")
 
         # HIGIENIZAÇÃO DE COLUNAS (Evita erro de cabeçalho duplo)
         df.rename(columns=lambda x: 'Data' if limpar_texto(x) == 'data' else x, inplace=True)
@@ -304,16 +323,19 @@ async def run_engine_backend(
         df.rename(columns=lambda x: 'Tmax' if limpar_texto(x) in ['tmax','tmaxima','tmáx'] else x, inplace=True)
         df.rename(columns=lambda x: 'NF' if limpar_texto(x) in ['nf','variavel','variável'] else x, inplace=True)
 
-        # TRATAMENTO NUMÉRICO AGRESSIVO (MATA O ERRO "STRING NOT MATCH")
+        # TRATAMENTO NUMÉRICO AGRESSIVO
         for col in ['Tmin','Tmax','NF']:
             if col in df.columns:
-                # Remove espaços, converte virgula pra ponto e transforma textos como "Tmin" em NaN
-                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.').str.replace('[^0-9\\.\\-]', '', regex=True), errors='coerce')
+                # CORREÇÃO 2: Adicionado o prefixo 'r' para Raw String no Regex
+                df[col] = pd.to_numeric(
+                    df[col].astype(str).str.replace(',', '.').str.replace(r'[^0-9\.\-]', '', regex=True), 
+                    errors='coerce'
+                )
         
         # TRATAMENTO DE DATAS
         df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
         
-        # Exclui linhas onde a conversão falhou (Ex: linhas em branco no final do Ctrl+V)
+        # Exclui linhas onde a conversão falhou
         df = df.dropna(subset=['Data','Tmin','Tmax']).sort_values('Data').reset_index(drop=True)
 
         # FILTRO FENOLÓGICO
@@ -321,7 +343,6 @@ async def run_engine_backend(
         if len(v_pheno) < 3:
             raise ValueError(f"Foram identificados apenas {len(v_pheno)} registros de NF (Variável). O cálculo exige no mínimo 3 pontos para criar a reta de regressão.")
 
-        # =========================================================
         # INICIO DO CÁLCULO
         df['Tmed'] = (df['Tmin'] + df['Tmax']) / 2
         p_idx = v_pheno.index
@@ -370,5 +391,5 @@ async def run_engine_backend(
         }
     except Exception as e:
         import traceback
-        print(traceback.format_exc())
+        print(traceback.format_exc()) # Mantém o log no console do servidor para você debugar depois
         return {"detail": str(e)}
